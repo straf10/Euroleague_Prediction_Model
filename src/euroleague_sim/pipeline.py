@@ -7,7 +7,7 @@ import numpy as np
 
 from .config import ProjectConfig
 from .data.cache import Cache
-from .data.fetch import EuroleagueFetcher, FetchParams
+from .data.fetch import EuroleagueFetcher, FetchParams, _find_schedule_columns
 from .features.possessions import compute_team_possessions_from_boxscore, _pick_col
 from .features.net_rating import (
     build_games_with_possessions,
@@ -228,22 +228,34 @@ def _pick_any_col(df: pd.DataFrame, candidates) -> str:
 
 
 def get_next_round_number(gamecodes_df: pd.DataFrame) -> int:
-    """Find the smallest round with at least one unplayed game."""
-    played_col = _pick_any_col(gamecodes_df, ["played", "Played", "isPlayed"])
+    """Find the next round to predict.
+
+    1) If there are unplayed games: return the smallest round that has at least one.
+    2) Otherwise (e.g. API returns only played games): return max(round) + 1.
+    """
     round_col = _pick_any_col(gamecodes_df, ["Round", "round"])
     df = gamecodes_df.copy()
+    df[round_col] = pd.to_numeric(df[round_col], errors="coerce")
+
+    # Try: smallest round with at least one unplayed game
+    played_col = _pick_any_col(gamecodes_df, ["played", "Played", "isPlayed"])
     if df[played_col].dtype != bool:
         df[played_col] = (
             df[played_col].astype(str).str.lower()
             .map({"true": True, "false": False}).fillna(False)
         )
-
     future = df.loc[~df[played_col]].copy()
-    if future.empty:
-        raise ValueError("No future (unplayed) games found in gamecodes season data.")
+    if not future.empty:
+        return int(future[round_col].min())
 
-    future[round_col] = pd.to_numeric(future[round_col], errors="coerce")
-    return int(future[round_col].min())
+    # Fallback: API often returns only played games (v1 results) → next = max_round + 1
+    max_round = df[round_col].max()
+    if pd.isna(max_round) or max_round < 0:
+        raise ValueError(
+            "Could not determine next round: gamecodes have no valid round numbers. "
+            "Run: euroleague-sim update-data --season 2025"
+        )
+    return int(max_round) + 1
 
 
 def build_round_schedule_v2(
@@ -251,45 +263,36 @@ def build_round_schedule_v2(
     season: int,
     round_number: int,
 ) -> pd.DataFrame:
-    """Get the schedule (home/away team codes) for a specific round."""
+    """Get the schedule (home/away team codes) for a specific round.
+
+    Uses v2 wrapper first; if column names don't match (v2 API shape), falls back to v3.
+    """
     df = fetcher.gamecodes_round(season, round_number)
     if df.empty:
         return df
 
-    game_col = _pick_any_col(df, ["gameCode", "Gamecode", "GameCode", "gamecode"])
-    round_col = _pick_any_col(df, ["Round", "round"])
+    cols = _find_schedule_columns(df)
+    if cols:
+        out = pd.DataFrame({
+            "Round": int(round_number),
+            "Gamecode": pd.to_numeric(df[cols["game"]], errors="coerce"),
+            "home_team": df[cols["home"]].astype(str).str.strip(),
+            "away_team": df[cols["away"]].astype(str).str.strip(),
+        })
+        out = out.dropna(subset=["Gamecode", "home_team", "away_team"])
+        out["Gamecode"] = out["Gamecode"].astype(int)
+        return out.sort_values(["Round", "Gamecode"]).reset_index(drop=True)
 
-    home_col = None
-    away_col = None
-    for c in df.columns:
-        cl = c.lower()
-        if home_col is None and ("hometeam" in cl and cl.endswith(".code")):
-            home_col = c
-        if away_col is None and ("awayteam" in cl and cl.endswith(".code")):
-            away_col = c
+    # v2 returned different column names → try v3
+    df_v3 = fetcher.schedule_round_v3(season, round_number)
+    if not df_v3.empty:
+        return df_v3
 
-    if home_col is None:
-        home_col = _pick_any_col(df, ["homeTeam.code", "homeTeamCode"])
-    if away_col is None:
-        away_col = _pick_any_col(df, ["awayTeam.code", "awayTeamCode"])
-
-    out = pd.DataFrame({
-        "Round": pd.to_numeric(df[round_col], errors="coerce").astype(int),
-        "Gamecode": pd.to_numeric(df[game_col], errors="coerce").astype(int),
-        "home_team": df[home_col].astype(str),
-        "away_team": df[away_col].astype(str),
-    })
-
-    for cand, outcol in [
-        (["gameDate", "date", "startDate"], "gameDate"),
-        (["gameTime", "time", "startTime"], "gameTime"),
-    ]:
-        for c in df.columns:
-            if c in cand:
-                out[outcol] = df[c]
-                break
-
-    return out.sort_values(["Round", "Gamecode"]).reset_index(drop=True)
+    raise ValueError(
+        "Could not find home/away team columns in round schedule. "
+        f"Available columns: {list(df.columns)}. "
+        "Check euroleague-api v2/v3 response structure."
+    )
 
 
 # ---------------------------------------------------------------------------

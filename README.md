@@ -22,15 +22,20 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+## Season codes
+
+- **2025** = φετινή σεζόν **2025-26** (seasonCode E2025). Πρέπει να κατεβάσεις δεδομένα για `--season 2025`.
+- Για Elo χρειάζονται και οι 2 προηγούμενες σεζόν (2023, 2024), που κατεβαίνουν με `--history 2`.
+
 ## Quick start
 
-1) Fetch and cache data (current + 2 past seasons for Elo):
+1) **Πρώτα** κατέβασε και cache δεδομένα (φετινή + 2 προηγούμενες σεζόν για Elo):
 
 ```bash
 euroleague-sim update-data --season 2025
 ```
 
-2) Predict the next unplayed round:
+2) Πρόβλεψη επόμενης αγωνιστικής (`next` = μικρότερη αγωνιστική με μη παιγμένα, ή max_round+1 αν το API δίνει μόνο παιγμένα):
 
 ```bash
 euroleague-sim predict --season 2025 --round next

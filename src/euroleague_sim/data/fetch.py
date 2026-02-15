@@ -11,6 +11,83 @@ from euroleague_api.game_stats import GameStats
 from euroleague_api.boxscore_data import BoxScoreData
 
 
+def _normalize_schedule_df(df: pd.DataFrame, round_number: int, season: int) -> pd.DataFrame:
+    """Build standardized schedule DataFrame (Round, Gamecode, home_team, away_team).
+
+    Tries multiple possible column names from v2/v3 API responses.
+    """
+    cols = _find_schedule_columns(df)
+    if not cols:
+        return pd.DataFrame()
+
+    out = pd.DataFrame({
+        "Round": int(round_number),
+        "Gamecode": pd.to_numeric(df[cols["game"]], errors="coerce"),
+        "home_team": df[cols["home"]].astype(str).str.strip(),
+        "away_team": df[cols["away"]].astype(str).str.strip(),
+    })
+    out = out.dropna(subset=["Gamecode", "home_team", "away_team"])
+    out["Gamecode"] = out["Gamecode"].astype(int)
+    return out.sort_values("Gamecode").reset_index(drop=True)
+
+
+def _find_schedule_columns(df: pd.DataFrame) -> dict | None:
+    """Find column names for game, home team code, away team code. Returns None if not found."""
+    col_lower = {c.lower(): c for c in df.columns}
+    candidates_game = ["gamecode", "game_code", "gamenumber", "code"]
+    candidates_home = [
+        # v2: local.club.code (actual Euroleague v2 response)
+        "local.club.code", "localclub.code", "localclubcode",
+        "localteamcode", "local.code", "local.team.code",
+        # v3 / generic
+        "hometeam.code", "hometeamcode", "homecode", "hometeam.teamcode",
+        "homeclubcode", "homeclub.code", "home.code", "home.teamcode",
+    ]
+    candidates_away = [
+        # v2: road.club.code (actual Euroleague v2 response)
+        "road.club.code", "roadclub.code", "roadclubcode",
+        "roadteamcode", "road.code", "road.team.code",
+        # v3 / generic
+        "awayteam.code", "awayteamcode", "awaycode", "awayteam.teamcode",
+        "awayclubcode", "awayclub.code", "away.code", "away.teamcode",
+    ]
+    game_col = None
+    for c in candidates_game:
+        if c in col_lower:
+            game_col = col_lower[c]
+            break
+    if game_col is None:
+        for c in df.columns:
+            if "game" in c.lower() and ("code" in c.lower() or "number" in c.lower()):
+                game_col = c
+                break
+    home_col = None
+    for c in candidates_home:
+        if c in col_lower:
+            home_col = col_lower[c]
+            break
+    if home_col is None:
+        for c in df.columns:
+            cl = c.lower()
+            if ("home" in cl or "local" in cl) and ("code" in cl) and ("club" in cl or "team" in cl):
+                home_col = c
+                break
+    away_col = None
+    for c in candidates_away:
+        if c in col_lower:
+            away_col = col_lower[c]
+            break
+    if away_col is None:
+        for c in df.columns:
+            cl = c.lower()
+            if ("away" in cl or "road" in cl) and ("code" in cl) and ("club" in cl or "team" in cl):
+                away_col = c
+                break
+    if game_col and home_col and away_col:
+        return {"game": game_col, "home": home_col, "away": away_col}
+    return None
+
+
 @dataclass(frozen=True)
 class FetchParams:
     competition: str = "E"
@@ -51,6 +128,33 @@ class EuroleagueFetcher:
         # v2 seasons/{season}/games?roundNumber=... via wrapper
         df = self.gamestats.get_gamecodes_round(season_start_year, round_number)
         return df
+
+    def schedule_round_v3(
+        self, season_start_year: int, round_number: int
+    ) -> pd.DataFrame:
+        """Fetch round schedule from v3 API (fallback when v2 column names differ).
+
+        Note: v3 list-games endpoint may return 405 Method Not Allowed; we catch and return empty.
+        """
+        season_code = f"{self.params.competition}{season_start_year}"
+        url = (
+            f"{self.V3_BASE}/competitions/{self.params.competition}"
+            f"/seasons/{season_code}/games"
+        )
+        params = {"roundNumber": round_number}
+        try:
+            r = self.session.get(url, params=params, timeout=30)
+            r.raise_for_status()
+        except requests.exceptions.HTTPError:
+            # v3 often returns 405 for GET list; rely on v2 only
+            return pd.DataFrame()
+        data = r.json()
+        rows = data.get("games") or data.get("data") or (data if isinstance(data, list) else [])
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.json_normalize(rows)
+        return _normalize_schedule_df(df, round_number, season_start_year)
 
     def player_boxscore_stats_season(self, season_start_year: int) -> pd.DataFrame:
         # live.euroleague.net Boxscore endpoint via wrapper

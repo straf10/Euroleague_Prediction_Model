@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: euroleague-sim
+Version: 0.2.0
+Summary: Euroleague next-round predictions: Net Rating + Elo + Logistic projection + Monte Carlo simulations
+Requires-Python: >=3.10
+Requires-Dist: euroleague-api>=0.0.21
+Requires-Dist: pandas>=2.0
+Requires-Dist: numpy>=1.24
+Requires-Dist: requests>=2.31
+Requires-Dist: tqdm>=4.66
+Requires-Dist: python-dateutil>=2.9
+Requires-Dist: scipy>=1.11
+Requires-Dist: scikit-learn>=1.3

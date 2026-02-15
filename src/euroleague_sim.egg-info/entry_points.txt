@@ -1,0 +1,2 @@
+[console_scripts]
+euroleague-sim = euroleague_sim.cli:main

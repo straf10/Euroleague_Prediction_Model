@@ -48,6 +48,21 @@ class ShrinkageConfig:
 
 
 @dataclass(frozen=True)
+class MLConfig:
+    """Configuration for ML model training and ensemble prediction."""
+    rf_n_estimators: int = 300
+    rf_max_depth: int = 6
+    rf_min_samples_leaf: int = 5
+    nn_hidden_layers: tuple = (64, 32)
+    nn_alpha: float = 0.001
+    nn_max_iter: int = 1000
+    rf_weight: float = 0.5       # ensemble weight for Random Forest
+    nn_weight: float = 0.5       # ensemble weight for Neural Network
+    model_dir: str = "models"    # directory for persisted model artefacts
+    cv_folds: int = 5
+
+
+@dataclass(frozen=True)
 class SeasonConfig:
     competition: str = "E"       # 'E' Euroleague, 'U' Eurocup
     season_start_year: int = 2025  # current season (2025-26)
@@ -61,6 +76,7 @@ class ProjectConfig:
     projection: ProjectionConfig = ProjectionConfig()
     mc: MCConfig = MCConfig()
     shrinkage: ShrinkageConfig = ShrinkageConfig()
+    ml: MLConfig = MLConfig()
 
     @staticmethod
     def default() -> "ProjectConfig":
@@ -77,9 +93,13 @@ class ProjectConfig:
         projection = ProjectionConfig(**data.get("projection", {}))
         mc = MCConfig(**data.get("mc", {}))
         shrinkage = ShrinkageConfig(**data.get("shrinkage", {}))
+        ml_data = data.get("ml", {})
+        if "nn_hidden_layers" in ml_data:
+            ml_data["nn_hidden_layers"] = tuple(ml_data["nn_hidden_layers"])
+        ml = MLConfig(**ml_data)
         return ProjectConfig(
             season=season, elo=elo, projection=projection,
-            mc=mc, shrinkage=shrinkage,
+            mc=mc, shrinkage=shrinkage, ml=ml,
         )
 
     def dump(self, path: Path) -> None:

@@ -13,22 +13,30 @@ def simulate_next_round(
     sigma: float = 11.5,
     n_sims: int = 20_000,
     seed: Optional[int] = 42,
+    mu_override: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
     """Monte Carlo simulation for margin distribution (spec section 8).
 
-    matchup_df must contain columns A and B (from compute_matchup_features).
+    matchup_df must contain columns A and B (from compute_matchup_features),
+    unless *mu_override* is provided.
 
     For each game:
-        mu = alpha1 * A + alpha2 * B + alpha3
+        mu = mu_override  OR  alpha1 * A + alpha2 * B + alpha3
         margin ~ Normal(mu, sigma)
         home win iff margin > 0
 
     Stores: pHomeWin (MC), muMargin, sigmaMargin, q10, q50, q90.
+
+    Parameters
+    ----------
+    mu_override : optional array of pre-computed mean margins (e.g. from an ML
+        model).  When provided, the linear formula (alpha*A + ...) is skipped.
     """
-    required = ["home_team", "away_team", "A", "B"]
-    for c in required:
-        if c not in matchup_df.columns:
-            raise KeyError(f"matchup_df missing column: {c}")
+    if mu_override is None:
+        required = ["home_team", "away_team", "A", "B"]
+        for c in required:
+            if c not in matchup_df.columns:
+                raise KeyError(f"matchup_df missing column: {c}")
 
     df = matchup_df.copy().reset_index(drop=True)
     n_games = len(df)
@@ -37,10 +45,12 @@ def simulate_next_round(
 
     rng = np.random.default_rng(seed)
 
-    a_vals = df["A"].to_numpy(dtype=float)
-    b_vals = df["B"].to_numpy(dtype=float)
-
-    mu = alpha1 * a_vals + alpha2 * b_vals + alpha3  # shape (n_games,)
+    if mu_override is not None:
+        mu = np.asarray(mu_override, dtype=float)
+    else:
+        a_vals = df["A"].to_numpy(dtype=float)
+        b_vals = df["B"].to_numpy(dtype=float)
+        mu = alpha1 * a_vals + alpha2 * b_vals + alpha3  # shape (n_games,)
 
     margins = rng.normal(loc=mu, scale=sigma, size=(int(n_sims), n_games))  # (n_sims, n_games)
 

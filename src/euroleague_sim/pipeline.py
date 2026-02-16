@@ -19,9 +19,13 @@ from .features.elo import (
     build_elo_prior_from_past_seasons,
     build_elo_hist,
     build_current_season_elo,
+    run_elo,
 )
 from .sim.model import compute_matchup_features, logistic_projection
 from .sim.engine import simulate_next_round
+from .ml.features import build_training_dataset, build_prediction_features
+from .ml.train import train_models
+from .ml.predict import load_predictor
 
 
 def _key(prefix: str, season: int) -> str:
@@ -296,7 +300,78 @@ def build_round_schedule_v2(
 
 
 # ---------------------------------------------------------------------------
-# Step 8-9: Prediction pipeline
+# Step 10: ML training pipeline
+# ---------------------------------------------------------------------------
+
+def train_ml_pipeline(
+    cache: Cache,
+    cfg: ProjectConfig,
+    current_season: int,
+    verbose: bool = True,
+) -> Dict[str, float]:
+    """Build training data from 3 seasons, train RF + NN, save models.
+
+    Returns the evaluation metrics dict.
+    """
+    seasons_data: Dict[int, Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]] = {}
+    start = current_season - cfg.season.history_seasons
+
+    for s in range(start, current_season + 1):
+        games_k = _key("feat_games", s)
+        tg_k    = _key("feat_team_game", s)
+        if not cache.has_df(games_k) or not cache.has_df(tg_k):
+            if verbose:
+                print(f"  [train] Skipping season {s}: cached features not found.")
+            continue
+
+        games_df     = cache.load_df(games_k)
+        team_game_df = cache.load_df(tg_k)
+
+        if games_df.empty:
+            continue
+
+        elo_result = run_elo(
+            games_df,
+            base=cfg.elo.base,
+            k=cfg.elo.k,
+            home_advantage=cfg.elo.home_advantage,
+        )
+        seasons_data[s] = (games_df, team_game_df, elo_result.game_elos)
+
+    if not seasons_data:
+        raise RuntimeError(
+            "No training data available. Run `update-data` first for all seasons."
+        )
+
+    if verbose:
+        total = sum(len(g) for g, _, _ in seasons_data.values())
+        print(f"  [train] Building training dataset: {len(seasons_data)} season(s), "
+              f"{total} games …")
+
+    train_df = build_training_dataset(seasons_data)
+
+    if verbose:
+        print(f"  [train] Training dataset: {len(train_df)} rows × "
+              f"{len(train_df.columns)} columns")
+
+    model_dir = Path(cfg.ml.model_dir)
+    metrics = train_models(
+        train_df,
+        model_dir=model_dir,
+        rf_n_estimators=cfg.ml.rf_n_estimators,
+        rf_max_depth=cfg.ml.rf_max_depth,
+        rf_min_samples_leaf=cfg.ml.rf_min_samples_leaf,
+        nn_hidden_layers=tuple(cfg.ml.nn_hidden_layers),
+        nn_alpha=cfg.ml.nn_alpha,
+        nn_max_iter=cfg.ml.nn_max_iter,
+        cv_folds=cfg.ml.cv_folds,
+        verbose=verbose,
+    )
+    return metrics
+
+
+# ---------------------------------------------------------------------------
+# Prediction (updated with ML integration)
 # ---------------------------------------------------------------------------
 
 def predict_next_round(
@@ -315,12 +390,15 @@ def predict_next_round(
     2) Compute EloCurrent (hist + current season update).
     3) Get schedule for the target round.
     4) Compute matchup features A, B.
-    5) Run logistic projection for P(HomeWin).
-    6) Run Monte Carlo for margin distribution.
-    7) Return combined predictions DataFrame.
+    5) Run logistic projection for P(HomeWin) (kept as baseline reference).
+    6) Run ML ensemble (RF + NN) if trained models are available.
+    7) Run Monte Carlo for margin distribution (uses ML margin if available).
+    8) Return combined predictions DataFrame.
     """
     # 1) Net ratings
-    _, _, team_ratings, summ = build_features_for_season(cache, season, cfg=cfg, force=False)
+    _, team_game, team_ratings, summ = build_features_for_season(
+        cache, season, cfg=cfg, force=False,
+    )
 
     # 2) EloCurrent
     current_elos = build_current_elo(cache, cfg, season, force=False)
@@ -334,7 +412,7 @@ def predict_next_round(
     if schedule.empty:
         raise ValueError(f"No schedule found for season {season} round {round_number}")
 
-    # 4) Matchup features
+    # 4) Matchup features (A, B — for logistic + MC fallback)
     matchup = compute_matchup_features(
         schedule_df=schedule,
         team_ratings_df=team_ratings,
@@ -342,7 +420,7 @@ def predict_next_round(
         elo_base=cfg.elo.base,
     )
 
-    # 5) Logistic projection
+    # 5) Logistic projection (baseline reference)
     matchup = logistic_projection(
         matchup,
         w1=cfg.projection.w1,
@@ -350,7 +428,32 @@ def predict_next_round(
         w3=cfg.projection.w3,
     )
 
-    # 6) Monte Carlo simulation
+    # 6) ML ensemble prediction
+    model_dir = Path(cfg.ml.model_dir)
+    predictor = load_predictor(model_dir)
+    ml_margin = None
+
+    if predictor is not None:
+        ml_features = build_prediction_features(
+            schedule_df=schedule,
+            team_ratings_df=team_ratings,
+            current_elos=current_elos,
+            team_game_df=team_game,
+            round_number=int(round_number),
+            elo_base=cfg.elo.base,
+        )
+        ml_pred = predictor.predict(
+            ml_features,
+            rf_weight=cfg.ml.rf_weight,
+            nn_weight=cfg.ml.nn_weight,
+        )
+        matchup["pHomeWin_rf"]  = ml_pred["pHomeWin_rf"].values
+        matchup["pHomeWin_nn"]  = ml_pred["pHomeWin_nn"].values
+        matchup["pHomeWin_ml"]  = ml_pred["pHomeWin_ml"].values
+        matchup["margin_ml"]    = ml_pred["margin_ml"].values
+        ml_margin = ml_pred["margin_ml"].values
+
+    # 7) Monte Carlo simulation
     sigma_eff = cfg.mc.sigma
     if summ.get("margin_sigma_points"):
         sigma_from_data = float(summ["margin_sigma_points"])
@@ -367,15 +470,22 @@ def predict_next_round(
         sigma=sigma_eff,
         n_sims=n_sims_eff,
         seed=seed,
+        mu_override=ml_margin,
     )
 
-    # 7) Clean output
+    # 8) Clean output
     output_cols = [
         "Round", "Gamecode", "home_team", "away_team",
-        "pHomeWin_logistic", "pHomeWin",
-        "muMargin", "meanMargin", "q10", "q50", "q90",
+        # ML ensemble (primary)
+        "pHomeWin_ml", "pHomeWin_rf", "pHomeWin_nn",
+        # Legacy logistic (reference)
+        "pHomeWin_logistic",
+        # Monte Carlo
+        "pHomeWin", "muMargin", "meanMargin",
+        "q10", "q50", "q90",
+        # Context
         "EloCurrent_home", "EloCurrent_away",
-        "A", "B", "n_sims",
+        "A", "B", "margin_ml", "n_sims",
     ]
     output_cols = [c for c in output_cols if c in pred.columns]
     return pred[output_cols].copy()

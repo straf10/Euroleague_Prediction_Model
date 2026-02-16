@@ -14,6 +14,7 @@ from .pipeline import (
     update_season_cache,
     build_features_for_season,
     predict_next_round,
+    train_ml_pipeline,
     get_next_round_number,
     save_predictions,
 )
@@ -36,6 +37,10 @@ def _parse_args(argv):
     upd.add_argument("--history", type=int, default=2, help="Past seasons to cache for Elo (default: 2)")
     upd.add_argument("--force", action="store_true", help="Force re-download raw data and rebuild features")
 
+    # train
+    trn = sub.add_parser("train", help="Train ML models (Random Forest + Neural Network)")
+    trn.add_argument("--season", type=int, default=2025, help="Current season start year (default: 2025)")
+
     # predict
     pred = sub.add_parser("predict", help="Predict a round (default: next unplayed round)")
     pred.add_argument("--season", type=int, default=2025, help="Season start year (default: 2025)")
@@ -49,24 +54,44 @@ def _parse_args(argv):
 
 def _print_predictions(pred_df: pd.DataFrame, round_number: int) -> None:
     """Pretty-print predictions to terminal."""
+    has_ml = "pHomeWin_ml" in pred_df.columns
+
     print(f"\n{'='*80}")
     print(f"  EUROLEAGUE PREDICTIONS — Round {round_number}")
+    if has_ml:
+        print(f"  Models: Random Forest + Neural Network ensemble + Monte Carlo")
+    else:
+        print(f"  Models: Logistic + Monte Carlo  (run 'train' to enable ML models)")
     print(f"{'='*80}\n")
 
     for _, row in pred_df.iterrows():
         home = row.get("home_team", "?")
         away = row.get("away_team", "?")
-        p_home_mc = row.get("pHomeWin", 0)
-        p_home_log = row.get("pHomeWin_logistic", 0)
-        margin = row.get("q50", 0)
-        q10 = row.get("q10", 0)
-        q90 = row.get("q90", 0)
+        p_home_mc  = row.get("pHomeWin", 0)
+        margin     = row.get("q50", 0)
+        q10        = row.get("q10", 0)
+        q90        = row.get("q90", 0)
 
-        winner = home if p_home_mc > 0.5 else away
-        conf = max(p_home_mc, 1 - p_home_mc) * 100
+        if has_ml:
+            p_ml  = row.get("pHomeWin_ml", 0)
+            p_rf  = row.get("pHomeWin_rf", 0)
+            p_nn  = row.get("pHomeWin_nn", 0)
+            p_log = row.get("pHomeWin_logistic", 0)
 
-        print(f"  {home:>5s}  vs  {away:<5s}")
-        print(f"    P(Home Win): {p_home_mc:.1%} (MC)  |  {p_home_log:.1%} (logistic)")
+            winner = home if p_ml > 0.5 else away
+            conf = max(p_ml, 1 - p_ml) * 100
+
+            print(f"  {home:>5s}  vs  {away:<5s}")
+            print(f"    P(Home Win):  ML: {p_ml:.1%}  (RF: {p_rf:.1%}  NN: {p_nn:.1%})")
+            print(f"    P(Home Win):  MC: {p_home_mc:.1%}  |  Logistic: {p_log:.1%}")
+        else:
+            p_log = row.get("pHomeWin_logistic", 0)
+            winner = home if p_home_mc > 0.5 else away
+            conf = max(p_home_mc, 1 - p_home_mc) * 100
+
+            print(f"  {home:>5s}  vs  {away:<5s}")
+            print(f"    P(Home Win): {p_home_mc:.1%} (MC)  |  {p_log:.1%} (logistic)")
+
         print(f"    Expected margin: {margin:+.1f}  [{q10:+.1f} / {q90:+.1f}]")
         print(f"    -> Prediction: {winner} ({conf:.0f}% confidence)")
         print()
@@ -102,6 +127,14 @@ def main(argv=None):
             update_season_cache(cache, fetcher, s, force=args.force)
             build_features_for_season(cache, s, cfg=cfg, force=args.force)
         print(f"[update-data] Done. Cache at: {Path(args.cache_dir).resolve()}")
+        return 0
+
+    if args.cmd == "train":
+        season = int(args.season)
+        print(f"[train] Training ML models for season {season} "
+              f"(+ {cfg.season.history_seasons} history seasons) …")
+        metrics = train_ml_pipeline(cache, cfg, current_season=season, verbose=True)
+        print(f"[train] Done. Models at: {Path(cfg.ml.model_dir).resolve()}")
         return 0
 
     if args.cmd == "predict":

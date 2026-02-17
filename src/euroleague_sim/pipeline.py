@@ -21,7 +21,7 @@ from .features.elo import (
     build_current_season_elo,
     run_elo,
 )
-from .sim.model import compute_matchup_features, logistic_projection
+from .sim.model import compute_matchup_features
 from .sim.engine import simulate_next_round
 from .ml.features import build_training_dataset, build_prediction_features
 from .ml.train import train_models
@@ -351,7 +351,7 @@ def train_ml_pipeline(
     train_df = build_training_dataset(seasons_data)
 
     if verbose:
-        print(f"  [train] Training dataset: {len(train_df)} rows × "
+        print(f"  [train] Training dataset: {len(train_df)} rows x "
               f"{len(train_df.columns)} columns")
 
     model_dir = Path(cfg.ml.model_dir)
@@ -390,10 +390,9 @@ def predict_next_round(
     2) Compute EloCurrent (hist + current season update).
     3) Get schedule for the target round.
     4) Compute matchup features A, B.
-    5) Run logistic projection for P(HomeWin) (kept as baseline reference).
-    6) Run ML ensemble (RF + NN) if trained models are available.
-    7) Run Monte Carlo for margin distribution (uses ML margin if available).
-    8) Return combined predictions DataFrame.
+    5) Run ML ensemble (RF + NN) if trained models are available.
+    6) Run Monte Carlo for margin distribution (uses ML margin if available).
+    7) Return combined predictions DataFrame.
     """
     # 1) Net ratings
     _, team_game, team_ratings, summ = build_features_for_season(
@@ -412,7 +411,7 @@ def predict_next_round(
     if schedule.empty:
         raise ValueError(f"No schedule found for season {season} round {round_number}")
 
-    # 4) Matchup features (A, B — for logistic + MC fallback)
+    # 4) Matchup features (A, B — for MC fallback when ML models not available)
     matchup = compute_matchup_features(
         schedule_df=schedule,
         team_ratings_df=team_ratings,
@@ -420,15 +419,7 @@ def predict_next_round(
         elo_base=cfg.elo.base,
     )
 
-    # 5) Logistic projection (baseline reference)
-    matchup = logistic_projection(
-        matchup,
-        w1=cfg.projection.w1,
-        w2=cfg.projection.w2,
-        w3=cfg.projection.w3,
-    )
-
-    # 6) ML ensemble prediction
+    # 5) ML ensemble prediction
     model_dir = Path(cfg.ml.model_dir)
     predictor = load_predictor(model_dir)
     ml_margin = None
@@ -453,7 +444,7 @@ def predict_next_round(
         matchup["margin_ml"]    = ml_pred["margin_ml"].values
         ml_margin = ml_pred["margin_ml"].values
 
-    # 7) Monte Carlo simulation
+    # 6) Monte Carlo simulation
     sigma_eff = cfg.mc.sigma
     if summ.get("margin_sigma_points"):
         sigma_from_data = float(summ["margin_sigma_points"])
@@ -473,13 +464,11 @@ def predict_next_round(
         mu_override=ml_margin,
     )
 
-    # 8) Clean output
+    # 7) Clean output
     output_cols = [
         "Round", "Gamecode", "home_team", "away_team",
         # ML ensemble (primary)
         "pHomeWin_ml", "pHomeWin_rf", "pHomeWin_nn",
-        # Legacy logistic (reference)
-        "pHomeWin_logistic",
         # Monte Carlo
         "pHomeWin", "muMargin", "meanMargin",
         "q10", "q50", "q90",

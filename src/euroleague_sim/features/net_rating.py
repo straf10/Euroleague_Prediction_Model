@@ -46,10 +46,19 @@ def build_games_with_possessions(
     played_gc = gc.loc[gc[played_col]].copy()
 
     # home/away team codes come from possessions table (Team + Home flag)
-    home = poss.loc[poss["Home"] == 1, ["Season", "Gamecode", "Team", "possessions", "possessions_simple"]] \
-        .rename(columns={"Team": "home_team", "possessions": "home_poss", "possessions_simple": "home_poss_simple"})
-    away = poss.loc[poss["Home"] == 0, ["Season", "Gamecode", "Team", "possessions", "possessions_simple"]] \
-        .rename(columns={"Team": "away_team", "possessions": "away_poss", "possessions_simple": "away_poss_simple"})
+    # Four Factors columns (available after possessions rebuild)
+    ff_cols = ["FGA", "FGM2", "FGM3", "FTA", "ORB", "TOV", "opp_DRB"]
+    avail_ff = [c for c in ff_cols if c in poss.columns]
+
+    base_cols = ["Season", "Gamecode", "Team", "possessions", "possessions_simple"]
+    base_rename_h = {"Team": "home_team", "possessions": "home_poss", "possessions_simple": "home_poss_simple"}
+    base_rename_a = {"Team": "away_team", "possessions": "away_poss", "possessions_simple": "away_poss_simple"}
+    for c in avail_ff:
+        base_rename_h[c] = f"home_{c}"
+        base_rename_a[c] = f"away_{c}"
+
+    home = poss.loc[poss["Home"] == 1, base_cols + avail_ff].rename(columns=base_rename_h)
+    away = poss.loc[poss["Home"] == 0, base_cols + avail_ff].rename(columns=base_rename_a)
 
     # join by Season+Gamecode (wrapper uses Gamecode naming)
     played_gc = played_gc.rename(columns={game_col: "Gamecode"})
@@ -83,6 +92,11 @@ def build_games_with_possessions(
 
 def build_team_game_net_ratings(games_df: pd.DataFrame) -> pd.DataFrame:
     """Expands games_df (one row per game) into team-game rows with net rating per 100 possessions."""
+
+    # Four Factors columns (present after possessions rebuild with --force)
+    ff_raw = ["FGA", "FGM2", "FGM3", "FTA", "ORB", "TOV", "opp_DRB"]
+    has_ff = all(f"home_{c}" in games_df.columns for c in ff_raw)
+
     rows = []
 
     for _, g in games_df.iterrows():
@@ -90,8 +104,7 @@ def build_team_game_net_ratings(games_df: pd.DataFrame) -> pd.DataFrame:
         if not np.isfinite(poss) or poss <= 0:
             continue
 
-        # home row
-        rows.append({
+        base_home = {
             "Season": int(g["Season"]),
             "Gamecode": int(g["Gamecode"]),
             "Round": int(g["Round"]),
@@ -102,9 +115,8 @@ def build_team_game_net_ratings(games_df: pd.DataFrame) -> pd.DataFrame:
             "PointsFor": float(g["home_points"]),
             "PointsAgainst": float(g["away_points"]),
             "Possessions": poss,
-        })
-        # away row
-        rows.append({
+        }
+        base_away = {
             "Season": int(g["Season"]),
             "Gamecode": int(g["Gamecode"]),
             "Round": int(g["Round"]),
@@ -115,7 +127,15 @@ def build_team_game_net_ratings(games_df: pd.DataFrame) -> pd.DataFrame:
             "PointsFor": float(g["away_points"]),
             "PointsAgainst": float(g["home_points"]),
             "Possessions": poss,
-        })
+        }
+
+        if has_ff:
+            for c in ff_raw:
+                base_home[c] = float(g.get(f"home_{c}", 0))
+                base_away[c] = float(g.get(f"away_{c}", 0))
+
+        rows.append(base_home)
+        rows.append(base_away)
 
     tdf = pd.DataFrame(rows)
     if tdf.empty:

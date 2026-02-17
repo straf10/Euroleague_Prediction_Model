@@ -93,12 +93,31 @@ def compute_team_possessions_from_boxscore(player_boxscore_df: pd.DataFrame) -> 
         + merged[tov]
     )
 
-    out = merged[[season_col, game_col, team_col, home_col, "possessions", "possessions_simple"]].copy()
+    # Four Factors raw stats (standardised names)
+    merged["FGM2_std"] = merged[fgm2].astype(float)
+    merged["FGM3_std"] = merged[fgm3].astype(float)
+    merged["FTA_std"]  = merged[fta].astype(float)
+    merged["ORB_std"]  = merged[orb].astype(float)
+    merged["TOV_std"]  = merged[tov].astype(float)
+
+    out_cols = [
+        season_col, game_col, team_col, home_col,
+        "possessions", "possessions_simple",
+        "FGA", "FGM2_std", "FGM3_std", "FTA_std",
+        "ORB_std", "TOV_std", "opp_drb",
+    ]
+    out = merged[out_cols].copy()
     out.rename(columns={
         season_col: "Season",
         game_col: "Gamecode",
         team_col: "Team",
-        home_col: "Home"
+        home_col: "Home",
+        "FGM2_std": "FGM2",
+        "FGM3_std": "FGM3",
+        "FTA_std":  "FTA",
+        "ORB_std":  "ORB",
+        "TOV_std":  "TOV",
+        "opp_drb":  "opp_DRB",
     }, inplace=True)
 
     # Sanity

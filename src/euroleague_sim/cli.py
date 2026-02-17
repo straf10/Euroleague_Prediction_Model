@@ -23,7 +23,7 @@ from .pipeline import (
 def _parse_args(argv):
     p = argparse.ArgumentParser(
         prog="euroleague-sim",
-        description="Euroleague next-round predictions (net rating + Elo + Monte Carlo)",
+        description="Euroleague next-round predictions (RF + NN ensemble + Monte Carlo)",
     )
     p.add_argument("--cache-dir", default="data_cache", help="Folder for cached data (default: data_cache)")
     p.add_argument("--config", default=None, help="Path to config.json (optional)")
@@ -61,7 +61,7 @@ def _print_predictions(pred_df: pd.DataFrame, round_number: int) -> None:
     if has_ml:
         print(f"  Models: Random Forest + Neural Network ensemble + Monte Carlo")
     else:
-        print(f"  Models: Logistic + Monte Carlo  (run 'train' to enable ML models)")
+        print(f"  Models: Monte Carlo only  (run 'train' to enable ML models)")
     print(f"{'='*80}\n")
 
     for _, row in pred_df.iterrows():
@@ -76,21 +76,19 @@ def _print_predictions(pred_df: pd.DataFrame, round_number: int) -> None:
             p_ml  = row.get("pHomeWin_ml", 0)
             p_rf  = row.get("pHomeWin_rf", 0)
             p_nn  = row.get("pHomeWin_nn", 0)
-            p_log = row.get("pHomeWin_logistic", 0)
 
             winner = home if p_ml > 0.5 else away
             conf = max(p_ml, 1 - p_ml) * 100
 
             print(f"  {home:>5s}  vs  {away:<5s}")
             print(f"    P(Home Win):  ML: {p_ml:.1%}  (RF: {p_rf:.1%}  NN: {p_nn:.1%})")
-            print(f"    P(Home Win):  MC: {p_home_mc:.1%}  |  Logistic: {p_log:.1%}")
+            print(f"    P(Home Win):  MC: {p_home_mc:.1%}")
         else:
-            p_log = row.get("pHomeWin_logistic", 0)
             winner = home if p_home_mc > 0.5 else away
             conf = max(p_home_mc, 1 - p_home_mc) * 100
 
             print(f"  {home:>5s}  vs  {away:<5s}")
-            print(f"    P(Home Win): {p_home_mc:.1%} (MC)  |  {p_log:.1%} (logistic)")
+            print(f"    P(Home Win): {p_home_mc:.1%} (MC)")
 
         print(f"    Expected margin: {margin:+.1f}  [{q10:+.1f} / {q90:+.1f}]")
         print(f"    -> Prediction: {winner} ({conf:.0f}% confidence)")

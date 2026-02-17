@@ -5,10 +5,6 @@ import pandas as pd
 import numpy as np
 
 
-def _sigmoid(x: np.ndarray | float) -> np.ndarray | float:
-    return 1.0 / (1.0 + np.exp(-x))
-
-
 def compute_matchup_features(
     schedule_df: pd.DataFrame,
     team_ratings_df: pd.DataFrame,
@@ -41,22 +37,4 @@ def compute_matchup_features(
     df["EloCurrent_away"] = elo_away.values
     df["B"] = (elo_home.values - elo_away.values) / 25.0
 
-    return df
-
-
-def logistic_projection(
-    matchup_df: pd.DataFrame,
-    w1: float = 0.08,
-    w2: float = 0.90,
-    w3: float = 0.12,
-) -> pd.DataFrame:
-    """Compute P(HomeWin) via logistic model (spec section 7.3).
-
-    score = w1*A + w2*B + w3
-    P(HomeWin) = sigmoid(score)
-    """
-    df = matchup_df.copy()
-    score = w1 * df["A"] + w2 * df["B"] + w3
-    df["logistic_score"] = score
-    df["pHomeWin_logistic"] = _sigmoid(score.values)
     return df

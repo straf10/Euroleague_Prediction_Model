@@ -16,18 +16,6 @@ class EloConfig:
 
 
 @dataclass(frozen=True)
-class ProjectionConfig:
-    """Logistic model: score = w1*A + w2*B + w3; P(HomeWin) = sigmoid(score).
-
-    A = NetRtgHomeSplit(home) - NetRtgAwaySplit(away)
-    B = (EloCurrent(home) - EloCurrent(away)) / 25
-    """
-    w1: float = 0.08   # weight on net rating differential A
-    w2: float = 0.90   # weight on scaled Elo differential B
-    w3: float = 0.12   # constant home-edge intercept
-
-
-@dataclass(frozen=True)
 class MCConfig:
     """Monte Carlo parameters for margin simulation.
 
@@ -73,7 +61,6 @@ class SeasonConfig:
 class ProjectConfig:
     season: SeasonConfig = SeasonConfig()
     elo: EloConfig = EloConfig()
-    projection: ProjectionConfig = ProjectionConfig()
     mc: MCConfig = MCConfig()
     shrinkage: ShrinkageConfig = ShrinkageConfig()
     ml: MLConfig = MLConfig()
@@ -90,7 +77,6 @@ class ProjectConfig:
         data = json.loads(path.read_text(encoding="utf-8"))
         season = SeasonConfig(**data.get("season", {}))
         elo = EloConfig(**data.get("elo", {}))
-        projection = ProjectionConfig(**data.get("projection", {}))
         mc = MCConfig(**data.get("mc", {}))
         shrinkage = ShrinkageConfig(**data.get("shrinkage", {}))
         ml_data = data.get("ml", {})
@@ -98,7 +84,7 @@ class ProjectConfig:
             ml_data["nn_hidden_layers"] = tuple(ml_data["nn_hidden_layers"])
         ml = MLConfig(**ml_data)
         return ProjectConfig(
-            season=season, elo=elo, projection=projection,
+            season=season, elo=elo,
             mc=mc, shrinkage=shrinkage, ml=ml,
         )
 

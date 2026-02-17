@@ -22,6 +22,11 @@ FEATURE_COLS: List[str] = [
     "win_pct_diff",       # home win% − away win%
     "form_diff",          # home last-5 NetPer100 − away last-5 NetPer100
     "pace_diff",          # home possessions/game − away possessions/game
+    # Four Factors differentials
+    "efg_diff",           # effective FG% differential
+    "tov_pct_diff",       # turnover rate differential
+    "orb_pct_diff",       # offensive rebound rate differential
+    "ft_rate_diff",       # free-throw rate differential
     # Absolute – home team
     "home_off_rtg",
     "home_def_rtg",
@@ -90,6 +95,37 @@ def compute_cumulative_features(team_game_df: pd.DataFrame) -> pd.DataFrame:
     df["cum_pace"] = np.where(
         df["cum_n"] > 0, df["cum_poss"] / df["cum_n"], np.nan,
     )
+
+    # ---------- Four Factors cumulative ----------
+    _ff_cols = ["FGA", "FGM2", "FGM3", "FTA", "ORB", "TOV", "opp_DRB"]
+    _has_ff = all(c in df.columns for c in _ff_cols)
+    if _has_ff:
+        for c in _ff_cols:
+            df[f"cum_{c}"] = g[c].transform(
+                lambda x: x.shift(1).expanding().sum()
+            )
+        _fga = df["cum_FGA"]
+        df["cum_efg"] = np.where(
+            _fga > 0,
+            (df["cum_FGM2"].fillna(0) + 1.5 * df["cum_FGM3"].fillna(0)) / _fga,
+            np.nan,
+        )
+        df["cum_tov_pct"] = np.where(
+            df["cum_poss"] > 0,
+            df["cum_TOV"].fillna(0) / df["cum_poss"],
+            np.nan,
+        )
+        _orb_total = df["cum_ORB"].fillna(0) + df["cum_opp_DRB"].fillna(0)
+        df["cum_orb_pct"] = np.where(
+            _orb_total > 0,
+            df["cum_ORB"].fillna(0) / _orb_total,
+            np.nan,
+        )
+        df["cum_ft_rate"] = np.where(
+            _fga > 0,
+            df["cum_FTA"].fillna(0) / _fga,
+            np.nan,
+        )
 
     # ---------- home / away split ----------
     for is_home_val, prefix in [(1, "hs_"), (0, "as_")]:
@@ -195,6 +231,16 @@ def build_training_dataset(
             home_pace = _safe(h_row.get("cum_pace"), 72.0)
             away_pace = _safe(a_row.get("cum_pace"), 72.0)
 
+            # Four Factors (default fallbacks for early-season / missing data)
+            home_efg     = _safe(h_row.get("cum_efg"),     0.50)
+            away_efg     = _safe(a_row.get("cum_efg"),     0.50)
+            home_tov_pct = _safe(h_row.get("cum_tov_pct"), 0.15)
+            away_tov_pct = _safe(a_row.get("cum_tov_pct"), 0.15)
+            home_orb_pct = _safe(h_row.get("cum_orb_pct"), 0.25)
+            away_orb_pct = _safe(a_row.get("cum_orb_pct"), 0.25)
+            home_ft_rate = _safe(h_row.get("cum_ft_rate"), 0.30)
+            away_ft_rate = _safe(a_row.get("cum_ft_rate"), 0.30)
+
             feat: dict = {
                 # Differential
                 "net_rtg_diff":    home_net - away_net,
@@ -204,6 +250,11 @@ def build_training_dataset(
                 "win_pct_diff":    home_wpct - away_wpct,
                 "form_diff":       home_form - away_form,
                 "pace_diff":       home_pace - away_pace,
+                # Four Factors differentials
+                "efg_diff":        home_efg - away_efg,
+                "tov_pct_diff":    home_tov_pct - away_tov_pct,
+                "orb_pct_diff":    home_orb_pct - away_orb_pct,
+                "ft_rate_diff":    home_ft_rate - away_ft_rate,
                 # Absolute – home
                 "home_off_rtg":    home_off,
                 "home_def_rtg":    home_def,
@@ -254,6 +305,13 @@ def build_prediction_features(
     )
 
     # Per-team aggregate stats from team_game_df
+    _ff_pred_cols = ["FGA", "FGM2", "FGM3", "FTA", "ORB", "TOV", "opp_DRB"]
+    _ff_avail = (
+        team_game_df is not None
+        and not team_game_df.empty
+        and all(c in team_game_df.columns for c in _ff_pred_cols)
+    )
+
     team_stats: Dict[str, Dict[str, float]] = {}
     if team_game_df is not None and not team_game_df.empty:
         for team, grp in team_game_df.groupby("Team"):
@@ -263,9 +321,38 @@ def build_prediction_features(
             wpct = float(wins / n) if n > 0 else 0.5
             form = float(grp_sorted["NetPer100"].iloc[-5:].mean()) if n >= 1 else 0.0
             pace = float(grp_sorted["Possessions"].mean()) if n >= 1 else 72.0
-            team_stats[str(team)] = {"win_pct": wpct, "form": form, "pace": pace}
+            stats: Dict[str, float] = {
+                "win_pct": wpct, "form": form, "pace": pace,
+            }
+            # Four Factors from full-season cumulative totals
+            if _ff_avail:
+                t_fga = float(grp_sorted["FGA"].sum())
+                t_fgm2 = float(grp_sorted["FGM2"].sum())
+                t_fgm3 = float(grp_sorted["FGM3"].sum())
+                t_fta = float(grp_sorted["FTA"].sum())
+                t_orb = float(grp_sorted["ORB"].sum())
+                t_tov = float(grp_sorted["TOV"].sum())
+                t_opp_drb = float(grp_sorted["opp_DRB"].sum())
+                t_poss = float(grp_sorted["Possessions"].sum())
 
-    _default_stats = {"win_pct": 0.5, "form": 0.0, "pace": 72.0}
+                stats["efg"] = (
+                    (t_fgm2 + 1.5 * t_fgm3) / t_fga if t_fga > 0 else 0.50
+                )
+                stats["tov_pct"] = t_tov / t_poss if t_poss > 0 else 0.15
+                stats["orb_pct"] = (
+                    t_orb / (t_orb + t_opp_drb)
+                    if (t_orb + t_opp_drb) > 0 else 0.25
+                )
+                stats["ft_rate"] = t_fta / t_fga if t_fga > 0 else 0.30
+            else:
+                stats.update({"efg": 0.50, "tov_pct": 0.15,
+                              "orb_pct": 0.25, "ft_rate": 0.30})
+            team_stats[str(team)] = stats
+
+    _default_stats: Dict[str, float] = {
+        "win_pct": 0.5, "form": 0.0, "pace": 72.0,
+        "efg": 0.50, "tov_pct": 0.15, "orb_pct": 0.25, "ft_rate": 0.30,
+    }
 
     rows: List[dict] = []
     for _, game in schedule_df.iterrows():
@@ -301,6 +388,11 @@ def build_prediction_features(
             "win_pct_diff":    h_s["win_pct"] - a_s["win_pct"],
             "form_diff":       h_s["form"] - a_s["form"],
             "pace_diff":       h_s["pace"] - a_s["pace"],
+            # Four Factors differentials
+            "efg_diff":        h_s["efg"] - a_s["efg"],
+            "tov_pct_diff":    h_s["tov_pct"] - a_s["tov_pct"],
+            "orb_pct_diff":    h_s["orb_pct"] - a_s["orb_pct"],
+            "ft_rate_diff":    h_s["ft_rate"] - a_s["ft_rate"],
             "home_off_rtg":    home_off,
             "home_def_rtg":    home_def,
             "home_win_pct":    h_s["win_pct"],

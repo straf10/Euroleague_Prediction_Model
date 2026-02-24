@@ -44,9 +44,17 @@ class MLConfig:
     nn_hidden_layers: tuple = (64, 32)
     nn_alpha: float = 0.001
     nn_max_iter: int = 1000
-    rf_weight: float = 0.5       # ensemble weight for Random Forest
-    nn_weight: float = 0.5       # ensemble weight for Neural Network
-    model_dir: str = "models"    # directory for persisted model artefacts
+    xgb_n_estimators: int = 300
+    xgb_max_depth: int = 4
+    xgb_learning_rate: float = 0.05
+    xgb_subsample: float = 0.8
+    xgb_colsample_bytree: float = 0.8
+    xgb_reg_alpha: float = 0.1       # L1 regularisation
+    xgb_reg_lambda: float = 1.0      # L2 regularisation
+    rf_weight: float = 0.35          # ensemble weight for Random Forest
+    nn_weight: float = 0.30          # ensemble weight for Neural Network
+    xgb_weight: float = 0.35        # ensemble weight for XGBoost
+    model_dir: str = "models"        # directory for persisted model artefacts
     cv_folds: int = 5
 
 

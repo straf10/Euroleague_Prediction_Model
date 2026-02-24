@@ -1,4 +1,4 @@
-"""Machine Learning models for Euroleague prediction (Random Forest + Neural Network)."""
+"""Machine Learning models for Euroleague prediction (RF + XGBoost + Neural Network)."""
 
 from .features import FEATURE_COLS, build_training_dataset, build_prediction_features
 from .train import train_models

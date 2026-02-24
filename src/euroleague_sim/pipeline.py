@@ -364,6 +364,13 @@ def train_ml_pipeline(
         nn_hidden_layers=tuple(cfg.ml.nn_hidden_layers),
         nn_alpha=cfg.ml.nn_alpha,
         nn_max_iter=cfg.ml.nn_max_iter,
+        xgb_n_estimators=cfg.ml.xgb_n_estimators,
+        xgb_max_depth=cfg.ml.xgb_max_depth,
+        xgb_learning_rate=cfg.ml.xgb_learning_rate,
+        xgb_subsample=cfg.ml.xgb_subsample,
+        xgb_colsample_bytree=cfg.ml.xgb_colsample_bytree,
+        xgb_reg_alpha=cfg.ml.xgb_reg_alpha,
+        xgb_reg_lambda=cfg.ml.xgb_reg_lambda,
         cv_folds=cfg.ml.cv_folds,
         verbose=verbose,
     )
@@ -437,8 +444,11 @@ def predict_next_round(
             ml_features,
             rf_weight=cfg.ml.rf_weight,
             nn_weight=cfg.ml.nn_weight,
+            xgb_weight=cfg.ml.xgb_weight,
         )
         matchup["pHomeWin_rf"]  = ml_pred["pHomeWin_rf"].values
+        if "pHomeWin_xgb" in ml_pred.columns:
+            matchup["pHomeWin_xgb"] = ml_pred["pHomeWin_xgb"].values
         matchup["pHomeWin_nn"]  = ml_pred["pHomeWin_nn"].values
         matchup["pHomeWin_ml"]  = ml_pred["pHomeWin_ml"].values
         matchup["margin_ml"]    = ml_pred["margin_ml"].values
@@ -468,7 +478,7 @@ def predict_next_round(
     output_cols = [
         "Round", "Gamecode", "home_team", "away_team",
         # ML ensemble (primary)
-        "pHomeWin_ml", "pHomeWin_rf", "pHomeWin_nn",
+        "pHomeWin_ml", "pHomeWin_rf", "pHomeWin_xgb", "pHomeWin_nn",
         # Monte Carlo
         "pHomeWin", "muMargin", "meanMargin",
         "q10", "q50", "q90",

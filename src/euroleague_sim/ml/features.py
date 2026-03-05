@@ -22,11 +22,6 @@ FEATURE_COLS: List[str] = [
     "win_pct_diff",       # home win% − away win%
     "form_diff",          # home last-5 NetPer100 − away last-5 NetPer100
     "pace_diff",          # home possessions/game − away possessions/game
-    # Four Factors differentials
-    "efg_diff",           # effective FG% differential
-    "tov_pct_diff",       # turnover rate differential
-    "orb_pct_diff",       # offensive rebound rate differential
-    "ft_rate_diff",       # free-throw rate differential
     # Absolute – home team
     "home_off_rtg",
     "home_def_rtg",
@@ -231,16 +226,6 @@ def build_training_dataset(
             home_pace = _safe(h_row.get("cum_pace"), 72.0)
             away_pace = _safe(a_row.get("cum_pace"), 72.0)
 
-            # Four Factors (default fallbacks for early-season / missing data)
-            home_efg     = _safe(h_row.get("cum_efg"),     0.50)
-            away_efg     = _safe(a_row.get("cum_efg"),     0.50)
-            home_tov_pct = _safe(h_row.get("cum_tov_pct"), 0.15)
-            away_tov_pct = _safe(a_row.get("cum_tov_pct"), 0.15)
-            home_orb_pct = _safe(h_row.get("cum_orb_pct"), 0.25)
-            away_orb_pct = _safe(a_row.get("cum_orb_pct"), 0.25)
-            home_ft_rate = _safe(h_row.get("cum_ft_rate"), 0.30)
-            away_ft_rate = _safe(a_row.get("cum_ft_rate"), 0.30)
-
             feat: dict = {
                 # Differential
                 "net_rtg_diff":    home_net - away_net,
@@ -250,11 +235,6 @@ def build_training_dataset(
                 "win_pct_diff":    home_wpct - away_wpct,
                 "form_diff":       home_form - away_form,
                 "pace_diff":       home_pace - away_pace,
-                # Four Factors differentials
-                "efg_diff":        home_efg - away_efg,
-                "tov_pct_diff":    home_tov_pct - away_tov_pct,
-                "orb_pct_diff":    home_orb_pct - away_orb_pct,
-                "ft_rate_diff":    home_ft_rate - away_ft_rate,
                 # Absolute – home
                 "home_off_rtg":    home_off,
                 "home_def_rtg":    home_def,
@@ -388,11 +368,6 @@ def build_prediction_features(
             "win_pct_diff":    h_s["win_pct"] - a_s["win_pct"],
             "form_diff":       h_s["form"] - a_s["form"],
             "pace_diff":       h_s["pace"] - a_s["pace"],
-            # Four Factors differentials
-            "efg_diff":        h_s["efg"] - a_s["efg"],
-            "tov_pct_diff":    h_s["tov_pct"] - a_s["tov_pct"],
-            "orb_pct_diff":    h_s["orb_pct"] - a_s["orb_pct"],
-            "ft_rate_diff":    h_s["ft_rate"] - a_s["ft_rate"],
             "home_off_rtg":    home_off,
             "home_def_rtg":    home_def,
             "home_win_pct":    h_s["win_pct"],

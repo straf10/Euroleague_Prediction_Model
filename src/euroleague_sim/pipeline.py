@@ -361,6 +361,7 @@ def train_ml_pipeline(
         rf_n_estimators=cfg.ml.rf_n_estimators,
         rf_max_depth=cfg.ml.rf_max_depth,
         rf_min_samples_leaf=cfg.ml.rf_min_samples_leaf,
+        rf_min_samples_split=cfg.ml.rf_min_samples_split,
         nn_hidden_layers=tuple(cfg.ml.nn_hidden_layers),
         nn_alpha=cfg.ml.nn_alpha,
         nn_max_iter=cfg.ml.nn_max_iter,

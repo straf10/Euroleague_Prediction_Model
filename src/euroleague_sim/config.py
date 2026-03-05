@@ -39,8 +39,9 @@ class ShrinkageConfig:
 class MLConfig:
     """Configuration for ML model training and ensemble prediction."""
     rf_n_estimators: int = 300
-    rf_max_depth: int = 6
+    rf_max_depth: int = 4
     rf_min_samples_leaf: int = 5
+    rf_min_samples_split: int = 10
     nn_hidden_layers: tuple = (64, 32)
     nn_alpha: float = 0.001
     nn_max_iter: int = 1000

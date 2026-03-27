@@ -34,6 +34,7 @@ def train_models(
     seed: int = 42,
     cv_folds: int = 5,
     verbose: bool = True,
+    diagnostic_plot_path: Path | None = None,
 ) -> Dict[str, float]:
     """Train linear ML models, evaluate with cross-validation, and persist.
 
@@ -52,6 +53,8 @@ def train_models(
     seed : random state for reproducibility.
     cv_folds : number of `TimeSeriesSplit` folds.
     verbose : if True, print progress to stdout.
+    diagnostic_plot_path : if set, write a 2×2 diagnostics PNG (coefficients,
+        correlation heatmap, calibration curve, margin scatter).
 
     Returns
     -------
@@ -161,4 +164,21 @@ def train_models(
     )
 
     _log(f"Models saved to {model_dir.resolve()}")
+
+    if diagnostic_plot_path is not None:
+        from .plots import save_training_diagnostics
+
+        save_training_diagnostics(
+            ordered_df,
+            X_scaled,
+            y_cls,
+            y_reg,
+            logreg,
+            ridge,
+            diagnostic_plot_path,
+            feature_cols=FEATURE_COLS,
+            cv_folds=cv_folds,
+        )
+        _log(f"Training diagnostics plot saved to {diagnostic_plot_path.resolve()}")
+
     return metrics

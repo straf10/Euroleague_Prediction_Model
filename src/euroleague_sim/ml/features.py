@@ -15,14 +15,10 @@ import numpy as np
 # ---- Ordered list of feature columns consumed by the ML models ----
 FEATURE_COLS: List[str] = [
     "elo_diff_scaled",    # (elo_home − elo_away) / 25
-    "home_off_efg_matchup",  # home off eFG% − away def eFG%
-    "home_off_tov_matchup",  # home off TOV% − away def TOV%
-    "home_off_orb_matchup",  # home off ORB% − away def DRB%
-    "home_off_ftr_matchup",  # home off FT rate − away def FT rate
-    "away_off_efg_matchup",  # away off eFG% − home def eFG%
-    "away_off_tov_matchup",  # away off TOV% − home def TOV%
-    "away_off_orb_matchup",  # away off ORB% − home def DRB%
-    "away_off_ftr_matchup",  # away off FT rate − home def FT rate
+    "net_efg",            # (home off eFG% − away def eFG%) − (away off eFG% − home def eFG%)
+    "net_tov",            # (home off TOV% − away def TOV%) − (away off TOV% − home def TOV%)
+    "net_orb",            # (home off ORB% − away def DRB%) − (away off ORB% − home def DRB%)
+    "net_ftr",            # (home off FT rate − away def FT rate) − (away off FT rate − home def FT rate)
     "round_progress",     # round / max_rounds
 ]
 
@@ -257,16 +253,21 @@ def build_training_dataset(
             away_def_drb = _safe(a_row.get("cum_def_drb_pct"), 0.75)
             away_def_ftr = _safe(a_row.get("cum_def_ft_rate"), 0.30)
 
+            home_efg_matchup = home_off_efg - away_def_efg
+            home_tov_matchup = home_off_tov - away_def_tov
+            home_orb_matchup = home_off_orb - away_def_drb
+            home_ftr_matchup = home_off_ftr - away_def_ftr
+            away_efg_matchup = away_off_efg - home_def_efg
+            away_tov_matchup = away_off_tov - home_def_tov
+            away_orb_matchup = away_off_orb - home_def_drb
+            away_ftr_matchup = away_off_ftr - home_def_ftr
+
             feat: dict = {
                 "elo_diff_scaled": (elo_h - elo_a) / 25.0,
-                "home_off_efg_matchup": home_off_efg - away_def_efg,
-                "home_off_tov_matchup": home_off_tov - away_def_tov,
-                "home_off_orb_matchup": home_off_orb - away_def_drb,
-                "home_off_ftr_matchup": home_off_ftr - away_def_ftr,
-                "away_off_efg_matchup": away_off_efg - home_def_efg,
-                "away_off_tov_matchup": away_off_tov - home_def_tov,
-                "away_off_orb_matchup": away_off_orb - home_def_drb,
-                "away_off_ftr_matchup": away_off_ftr - home_def_ftr,
+                "net_efg": home_efg_matchup - away_efg_matchup,
+                "net_tov": home_tov_matchup - away_tov_matchup,
+                "net_orb": home_orb_matchup - away_orb_matchup,
+                "net_ftr": home_ftr_matchup - away_ftr_matchup,
                 "round_progress":  rnd / max_rounds,
                 # Targets
                 "home_win": int(float(game["home_points"]) > float(game["away_points"])),
@@ -378,16 +379,21 @@ def build_prediction_features(
         h_s = team_stats.get(ht, _default_stats)
         a_s = team_stats.get(at, _default_stats)
 
+        home_efg_matchup = h_s["off_efg"] - a_s["def_efg"]
+        home_tov_matchup = h_s["off_tov_pct"] - a_s["def_tov_pct"]
+        home_orb_matchup = h_s["off_orb_pct"] - a_s["def_drb_pct"]
+        home_ftr_matchup = h_s["off_ft_rate"] - a_s["def_ft_rate"]
+        away_efg_matchup = a_s["off_efg"] - h_s["def_efg"]
+        away_tov_matchup = a_s["off_tov_pct"] - h_s["def_tov_pct"]
+        away_orb_matchup = a_s["off_orb_pct"] - h_s["def_drb_pct"]
+        away_ftr_matchup = a_s["off_ft_rate"] - h_s["def_ft_rate"]
+
         feat: dict = {
             "elo_diff_scaled": (elo_h - elo_a) / 25.0,
-            "home_off_efg_matchup": h_s["off_efg"] - a_s["def_efg"],
-            "home_off_tov_matchup": h_s["off_tov_pct"] - a_s["def_tov_pct"],
-            "home_off_orb_matchup": h_s["off_orb_pct"] - a_s["def_drb_pct"],
-            "home_off_ftr_matchup": h_s["off_ft_rate"] - a_s["def_ft_rate"],
-            "away_off_efg_matchup": a_s["off_efg"] - h_s["def_efg"],
-            "away_off_tov_matchup": a_s["off_tov_pct"] - h_s["def_tov_pct"],
-            "away_off_orb_matchup": a_s["off_orb_pct"] - h_s["def_drb_pct"],
-            "away_off_ftr_matchup": a_s["off_ft_rate"] - h_s["def_ft_rate"],
+            "net_efg": home_efg_matchup - away_efg_matchup,
+            "net_tov": home_tov_matchup - away_tov_matchup,
+            "net_orb": home_orb_matchup - away_orb_matchup,
+            "net_ftr": home_ftr_matchup - away_ftr_matchup,
             "round_progress":  round_number / max_rounds,
         }
         rows.append(feat)

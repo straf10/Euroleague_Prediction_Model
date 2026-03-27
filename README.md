@@ -16,20 +16,16 @@ The figure below is produced when you run `euroleague-sim train` (saved as `plot
 
 If the preview is blank, confirm `plots/training_diagnostics.png` exists (run `euroleague-sim train`). The PNG is tracked in git so it also renders on GitHub after you push.
 
-## The 10 features
+## The 6 features
 
 These are the columns fed to the ML models (see `src/euroleague_sim/ml/features.py`, `FEATURE_COLS`):
 
 1. `elo_diff_scaled`
-2. `home_off_efg_matchup`
-3. `home_off_tov_matchup`
-4. `home_off_orb_matchup`
-5. `home_off_ftr_matchup`
-6. `away_off_efg_matchup`
-7. `away_off_tov_matchup`
-8. `away_off_orb_matchup`
-9. `away_off_ftr_matchup`
-10. `round_progress`
+2. `net_efg`
+3. `net_tov`
+4. `net_orb`
+5. `net_ftr`
+6. `round_progress`
 
 ## How to run
 

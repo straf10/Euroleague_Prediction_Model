@@ -3,12 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 import pandas as pd
-import numpy as np
 
 from .config import ProjectConfig
 from .data.cache import Cache
 from .data.fetch import EuroleagueFetcher, FetchParams, _find_schedule_columns
-from .features.possessions import compute_team_possessions_from_boxscore, _pick_col
+from .features.possessions import compute_team_possessions_from_boxscore
 from .features.net_rating import (
     build_games_with_possessions,
     build_team_game_net_ratings,
@@ -16,7 +15,6 @@ from .features.net_rating import (
     season_summary,
 )
 from .features.elo import (
-    build_elo_prior_from_past_seasons,
     build_elo_hist,
     build_current_season_elo,
     run_elo,
@@ -128,39 +126,6 @@ def build_features_for_season(
 # ---------------------------------------------------------------------------
 # Step 7: Elo (historic + current season)
 # ---------------------------------------------------------------------------
-
-def build_elo_prior(
-    cache: Cache,
-    cfg: ProjectConfig,
-    current_season: int,
-    force: bool = False,
-) -> pd.DataFrame:
-    """Build EloHist from past seasons and return DataFrame(Team, EloPrior)."""
-    k = _key("feat_elo_prior", current_season)
-    if not force and cache.has_df(k):
-        return cache.load_df(k)
-
-    season_games: Dict[int, pd.DataFrame] = {}
-    for s in range(current_season - cfg.season.history_seasons, current_season):
-        games_k = _key("feat_games", s)
-        if not cache.has_df(games_k):
-            raise FileNotFoundError(
-                f"Missing cached games for season {s}. Run update-data first."
-            )
-        season_games[s] = cache.load_df(games_k)
-
-    elo_prior = build_elo_prior_from_past_seasons(
-        season_games=season_games,
-        current_season=current_season,
-        base=cfg.elo.base,
-        k=cfg.elo.k,
-        home_advantage=cfg.elo.home_advantage,
-        blend_recent=cfg.elo.blend_recent,
-        blend_older=cfg.elo.blend_older,
-    )
-    cache.save_df(k, elo_prior)
-    return elo_prior
-
 
 def build_current_elo(
     cache: Cache,
@@ -309,7 +274,7 @@ def train_ml_pipeline(
     current_season: int,
     verbose: bool = True,
 ) -> Dict[str, float]:
-    """Build training data from 3 seasons, train RF + NN, save models.
+    """Build training data from multiple seasons, train linear models, save artefacts.
 
     Returns the evaluation metrics dict.
     """
@@ -358,20 +323,9 @@ def train_ml_pipeline(
     metrics = train_models(
         train_df,
         model_dir=model_dir,
-        rf_n_estimators=cfg.ml.rf_n_estimators,
-        rf_max_depth=cfg.ml.rf_max_depth,
-        rf_min_samples_leaf=cfg.ml.rf_min_samples_leaf,
-        rf_min_samples_split=cfg.ml.rf_min_samples_split,
-        nn_hidden_layers=tuple(cfg.ml.nn_hidden_layers),
-        nn_alpha=cfg.ml.nn_alpha,
-        nn_max_iter=cfg.ml.nn_max_iter,
-        xgb_n_estimators=cfg.ml.xgb_n_estimators,
-        xgb_max_depth=cfg.ml.xgb_max_depth,
-        xgb_learning_rate=cfg.ml.xgb_learning_rate,
-        xgb_subsample=cfg.ml.xgb_subsample,
-        xgb_colsample_bytree=cfg.ml.xgb_colsample_bytree,
-        xgb_reg_alpha=cfg.ml.xgb_reg_alpha,
-        xgb_reg_lambda=cfg.ml.xgb_reg_lambda,
+        logreg_C=cfg.ml.logreg_C,
+        logreg_max_iter=cfg.ml.logreg_max_iter,
+        ridge_alpha=cfg.ml.ridge_alpha,
         cv_folds=cfg.ml.cv_folds,
         verbose=verbose,
     )
@@ -398,7 +352,7 @@ def predict_next_round(
     2) Compute EloCurrent (hist + current season update).
     3) Get schedule for the target round.
     4) Compute matchup features A, B.
-    5) Run ML ensemble (RF + NN) if trained models are available.
+    5) Run ML models (LogReg + Ridge) if trained artefacts are available.
     6) Run Monte Carlo for margin distribution (uses ML margin if available).
     7) Return combined predictions DataFrame.
     """
@@ -441,18 +395,9 @@ def predict_next_round(
             round_number=int(round_number),
             elo_base=cfg.elo.base,
         )
-        ml_pred = predictor.predict(
-            ml_features,
-            rf_weight=cfg.ml.rf_weight,
-            nn_weight=cfg.ml.nn_weight,
-            xgb_weight=cfg.ml.xgb_weight,
-        )
-        matchup["pHomeWin_rf"]  = ml_pred["pHomeWin_rf"].values
-        if "pHomeWin_xgb" in ml_pred.columns:
-            matchup["pHomeWin_xgb"] = ml_pred["pHomeWin_xgb"].values
-        matchup["pHomeWin_nn"]  = ml_pred["pHomeWin_nn"].values
-        matchup["pHomeWin_ml"]  = ml_pred["pHomeWin_ml"].values
-        matchup["margin_ml"]    = ml_pred["margin_ml"].values
+        ml_pred = predictor.predict(ml_features)
+        matchup["pHomeWin_ml"] = ml_pred["pHomeWin_ml"].values
+        matchup["margin_ml"]   = ml_pred["margin_ml"].values
         ml_margin = ml_pred["margin_ml"].values
 
     # 6) Monte Carlo simulation
@@ -478,8 +423,8 @@ def predict_next_round(
     # 7) Clean output
     output_cols = [
         "Round", "Gamecode", "home_team", "away_team",
-        # ML ensemble (primary)
-        "pHomeWin_ml", "pHomeWin_rf", "pHomeWin_xgb", "pHomeWin_nn",
+        # ML
+        "pHomeWin_ml",
         # Monte Carlo
         "pHomeWin", "muMargin", "meanMargin",
         "q10", "q50", "q90",

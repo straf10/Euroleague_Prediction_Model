@@ -37,24 +37,10 @@ class ShrinkageConfig:
 
 @dataclass(frozen=True)
 class MLConfig:
-    """Configuration for ML model training and ensemble prediction."""
-    rf_n_estimators: int = 300
-    rf_max_depth: int = 4
-    rf_min_samples_leaf: int = 5
-    rf_min_samples_split: int = 10
-    nn_hidden_layers: tuple = (64, 32)
-    nn_alpha: float = 0.001
-    nn_max_iter: int = 1000
-    xgb_n_estimators: int = 300
-    xgb_max_depth: int = 4
-    xgb_learning_rate: float = 0.05
-    xgb_subsample: float = 0.8
-    xgb_colsample_bytree: float = 0.8
-    xgb_reg_alpha: float = 0.1       # L1 regularisation
-    xgb_reg_lambda: float = 1.0      # L2 regularisation
-    rf_weight: float = 0.35          # ensemble weight for Random Forest
-    nn_weight: float = 0.30          # ensemble weight for Neural Network
-    xgb_weight: float = 0.35        # ensemble weight for XGBoost
+    """Configuration for ML model training (Logistic Regression + Ridge)."""
+    logreg_C: float = 1.0            # inverse regularisation strength
+    logreg_max_iter: int = 1000
+    ridge_alpha: float = 1.0         # L2 regularisation strength
     model_dir: str = "models"        # directory for persisted model artefacts
     cv_folds: int = 5
 
@@ -88,10 +74,7 @@ class ProjectConfig:
         elo = EloConfig(**data.get("elo", {}))
         mc = MCConfig(**data.get("mc", {}))
         shrinkage = ShrinkageConfig(**data.get("shrinkage", {}))
-        ml_data = data.get("ml", {})
-        if "nn_hidden_layers" in ml_data:
-            ml_data["nn_hidden_layers"] = tuple(ml_data["nn_hidden_layers"])
-        ml = MLConfig(**ml_data)
+        ml = MLConfig(**data.get("ml", {}))
         return ProjectConfig(
             season=season, elo=elo,
             mc=mc, shrinkage=shrinkage, ml=ml,

@@ -1,32 +1,33 @@
 # Euroleague Prediction Model
 
-A machine learning prediction system for **EuroLeague basketball** (current season: 2025-26, `seasonCode E2025`).
+Baseline prediction system for EuroLeague basketball (current season example: `E2025`).
 
-Combines three ML models in a weighted ensemble with Monte Carlo simulations to produce win probabilities and margin distributions for upcoming games.
+The current ML pipeline is strictly linear:
+- `LogisticRegression` predicts home win probability (`pHomeWin_ml`)
+- `Ridge` predicts expected margin (`margin_ml`)
+- Monte Carlo converts margin assumptions into probability and quantiles
 
 ## Model Architecture
 
 | Component | Description |
 |---|---|
-| **Random Forest** | Classifier + regressor (300 trees, max depth 6) for baseline predictions |
-| **XGBoost** | Gradient-boosted classifier + regressor (300 rounds, learning rate 0.05) for capturing non-linear feature interactions |
-| **Neural Network** | MLP classifier + regressor (64-32 hidden layers, early stopping) for learning complex patterns |
-| **Ensemble** | Weighted average of all three models (RF 35%, XGBoost 35%, NN 30%) |
-| **Monte Carlo** | `margin ~ Normal(mu, sigma)` with 20,000 simulations per game for margin distributions |
+| **Logistic Regression** | Binary classifier for home win probability |
+| **Ridge Regression** | Linear regressor for home-away point margin |
+| **Monte Carlo** | `margin ~ Normal(mu, sigma)` with configurable simulation count |
 
-### Features (20 total)
+### Features (16 total)
 
-- **Differential features**: net rating diff, Elo diff, offensive/defensive matchups, win% diff, form (last 5 games), pace diff
-- **Four Factors differentials**: eFG%, turnover rate, offensive rebound rate, free-throw rate
-- **Absolute ratings**: offensive/defensive ratings and win% for both home and away teams, Elo ratings
-- **Context**: round progress (current round / total rounds)
+- **Differential:** `net_rtg_diff`, `elo_diff_scaled`, `off_matchup`, `def_matchup`, `win_pct_diff`, `form_diff`, `pace_diff`
+- **Home absolute:** `home_off_rtg`, `home_def_rtg`, `home_win_pct`, `elo_home`
+- **Away absolute:** `away_off_rtg`, `away_def_rtg`, `away_win_pct`, `elo_away`
+- **Context:** `round_progress`
 
 ### Supporting Components
 
 | Component | Description |
 |---|---|
-| **Net Rating** | Offensive/Defensive rating per 100 possessions with home/away splits and early-season shrinkage |
-| **Elo** | Historic prior blended from past 2 seasons (65/35 weight), updated game-by-game in the current season |
+| **Net Rating** | Offensive/Defensive ratings per 100 possessions with home/away splits and early-season shrinkage |
+| **Elo** | Historic prior from past seasons, then updated game-by-game in current season |
 | **Possessions** | Estimated via `FGA + 0.44*FTA - OREB + TOV` per team-game |
 
 ## Setup
@@ -44,34 +45,29 @@ pip install -e .
 
 ### Dependencies
 
-- `euroleague-api` — EuroLeague API wrapper for data fetching
-- `pandas`, `numpy` — data manipulation
-- `scikit-learn` — Random Forest and Neural Network models
-- `xgboost` — gradient boosting model
-- `scipy` — statistical functions
-- `joblib` — model serialisation
+- `euroleague-api` for data fetching
+- `pandas`, `numpy` for data processing
+- `scikit-learn` for Logistic Regression, Ridge, scaling, and metrics
+- `scipy` for statistics utilities
+- `joblib` for model persistence
 
 ## Quick Start
 
 ### 1. Fetch and cache data
 
-Downloads the current season plus 2 prior seasons (needed for Elo historic prior):
+Downloads the selected season plus prior seasons (default `--history 2`):
 
 ```bash
 euroleague-sim update-data --season 2025
 ```
 
-### 2. Train ML models
-
-Trains Random Forest + XGBoost + Neural Network on all available seasons:
+### 2. Train models
 
 ```bash
 euroleague-sim train --season 2025
 ```
 
 ### 3. Predict next round
-
-Automatically detects the next unplayed round:
 
 ```bash
 euroleague-sim predict --season 2025 --round next
@@ -83,90 +79,93 @@ Predict a specific round with custom simulation count:
 euroleague-sim predict --season 2025 --round 22 --n-sims 50000
 ```
 
-## Season Codes
-
-- **2025** = current season 2025-26 (`seasonCode E2025`)
-- Elo computation requires the 2 preceding seasons (2023, 2024), fetched automatically with `--history 2`
-
 ## Configuration
 
-Export and customise all model parameters:
+Generate and customize config values:
 
 ```bash
 euroleague-sim --dump-config config.json
-# Edit config.json (Elo weights, MC parameters, ML hyperparameters, ensemble weights, etc.)
 euroleague-sim --config config.json train --season 2025
 euroleague-sim --config config.json predict --season 2025
+```
+
+### Important: reset old local configs
+
+If you generated `config.json` before the linear baseline migration, it may still include removed ML keys. Regenerate it before running with `--config`:
+
+```bash
+rm -f config.json
+euroleague-sim --dump-config config.json
 ```
 
 ### Configurable Parameters
 
 | Section | Parameters |
 |---|---|
-| **Elo** | base rating, K-factor, home advantage, blend weights |
-| **Monte Carlo** | alpha1-3 coefficients, sigma, number of simulations |
-| **Shrinkage** | k_games for early-season rating stabilisation |
-| **ML** | RF/XGBoost/NN hyperparameters, ensemble weights, CV folds |
+| **Elo** | `base`, `k`, `home_advantage`, `blend_recent`, `blend_older` |
+| **Monte Carlo** | `alpha1`, `alpha2`, `alpha3`, `sigma`, `n_sims` |
+| **Shrinkage** | `k_games` |
+| **ML** | `logreg_C`, `logreg_max_iter`, `ridge_alpha`, `cv_folds`, `model_dir` |
 
 ## Output
 
 Predictions are saved to `outputs/round_{R}_predictions.csv`.
 
 Key columns:
-- `pHomeWin_ml` — ensemble win probability (primary prediction)
-- `pHomeWin_rf`, `pHomeWin_xgb`, `pHomeWin_nn` — individual model probabilities
-- `pHomeWin` — Monte Carlo win probability
-- `q10`, `q50`, `q90` — margin distribution quantiles
+- `pHomeWin_ml` — Logistic Regression home win probability
+- `margin_ml` — Ridge expected margin
+- `pHomeWin` — Monte Carlo home win probability
+- `q10`, `q50`, `q90` — simulated margin quantiles
 - `EloCurrent_home`, `EloCurrent_away` — current Elo ratings
 
 ## Data Cache
 
-Raw and processed data are stored in `./data_cache/` as pickle and JSON files. Re-run `update-data` to refresh.
+Raw and processed data are cached in `data_cache/` as pickle and JSON files.
+Use `update-data --force` to re-download and rebuild.
 
 ## Project Structure
 
 ```
 src/euroleague_sim/
-  __init__.py
-  config.py            # all parameters (Elo, MC, shrinkage, ML hyperparameters)
-  pipeline.py          # orchestrates: fetch -> features -> Elo -> train -> predict
-  cli.py               # command-line interface (update-data, train, predict)
+  config.py            # project parameters (Elo, MC, shrinkage, ML)
+  pipeline.py          # fetch -> features -> Elo -> train -> predict orchestration
+  cli.py               # commands: update-data, train, predict
   data/
     fetch.py           # euroleague-api wrapper + v3 HTTP fallback
     cache.py           # pickle/JSON filesystem cache
   features/
     possessions.py     # team possessions from boxscore data
-    net_rating.py      # OffRtg/DefRtg/NetRtg per 100 poss + home/away splits + shrinkage
-    elo.py             # Elo engine: historic blend, current season update
+    net_rating.py      # OffRtg/DefRtg/NetRtg per 100 + splits + shrinkage
+    elo.py             # Elo engine: historic blend + current-season updates
   ml/
-    features.py        # feature engineering (20 features, point-in-time for training)
-    train.py           # train RF + XGBoost + NN (classifier + regressor each)
-    predict.py         # EnsemblePredictor: load models + weighted ensemble inference
+    features.py        # 16-feature engineering for train/predict modes
+    train.py           # train Logistic Regression + Ridge
+    predict.py         # LinearPredictor: load and infer with saved models
   sim/
-    model.py           # matchup features (A, B) from net ratings and Elo
-    engine.py          # Monte Carlo margin simulation (Normal distribution)
-models/                # persisted model artefacts (.joblib) + metadata.json
-outputs/               # prediction CSVs per round
-data_cache/            # cached raw + processed data
+    model.py           # matchup features (A, B) from ratings and Elo
+    engine.py          # Monte Carlo margin simulation
+models/                # scaler.joblib, logreg.joblib, ridge.joblib, metadata.json
+outputs/               # prediction CSVs
+data_cache/            # cached raw + processed datasets
 ```
 
 ## Pipeline Flow
 
 ```
-1. update-data     Fetch raw boxscore + gamecodes from EuroLeague API
-                   Build possessions -> games -> team ratings -> Elo
-                   Cache everything to data_cache/
+1. update-data     Fetch raw gamecodes + player boxscore
+                   Build possessions -> games -> team ratings
+                   Cache artefacts in data_cache/
 
-2. train           Load 3 seasons of cached features
-                   Build point-in-time training dataset (no lookahead)
-                   Train RF + XGBoost + NN (classifier + regressor)
+2. train           Load cached historical features
+                   Build point-in-time dataset (no lookahead)
+                   Train Logistic Regression + Ridge
                    Evaluate with cross-validation
-                   Save models to models/
+                   Save artefacts to models/
 
-3. predict         Load current season features + Elo ratings
-                   Fetch schedule for target round
-                   Build prediction features from current stats
-                   Run 3-model ensemble for P(HomeWin) + expected margin
-                   Run Monte Carlo for margin distribution
-                   Save to outputs/
+3. predict         Load current features + Elo
+                   Fetch target round schedule
+                   Build prediction feature matrix
+                   Predict pHomeWin_ml + margin_ml
+                   Run Monte Carlo simulation
+                   Save CSV to outputs/
 ```

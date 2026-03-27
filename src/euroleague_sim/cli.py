@@ -15,7 +15,6 @@ from .pipeline import (
     build_features_for_season,
     predict_next_round,
     train_ml_pipeline,
-    get_next_round_number,
     save_predictions,
 )
 
@@ -23,7 +22,7 @@ from .pipeline import (
 def _parse_args(argv):
     p = argparse.ArgumentParser(
         prog="euroleague-sim",
-        description="Euroleague next-round predictions (RF + XGBoost + NN ensemble + Monte Carlo)",
+        description="Euroleague next-round predictions (Logistic Regression + Ridge + Monte Carlo)",
     )
     p.add_argument("--cache-dir", default="data_cache", help="Folder for cached data (default: data_cache)")
     p.add_argument("--config", default=None, help="Path to config.json (optional)")
@@ -38,7 +37,7 @@ def _parse_args(argv):
     upd.add_argument("--force", action="store_true", help="Force re-download raw data and rebuild features")
 
     # train
-    trn = sub.add_parser("train", help="Train ML models (Random Forest + XGBoost + Neural Network)")
+    trn = sub.add_parser("train", help="Train ML models (Logistic Regression + Ridge)")
     trn.add_argument("--season", type=int, default=2025, help="Current season start year (default: 2025)")
 
     # predict
@@ -55,13 +54,11 @@ def _parse_args(argv):
 def _print_predictions(pred_df: pd.DataFrame, round_number: int) -> None:
     """Pretty-print predictions to terminal."""
     has_ml = "pHomeWin_ml" in pred_df.columns
-    has_xgb = "pHomeWin_xgb" in pred_df.columns
 
     print(f"\n{'='*80}")
     print(f"  EUROLEAGUE PREDICTIONS — Round {round_number}")
     if has_ml:
-        models = "RF + XGBoost + NN" if has_xgb else "RF + NN"
-        print(f"  Models: {models} ensemble + Monte Carlo")
+        print(f"  Models: Logistic Regression + Ridge + Monte Carlo")
     else:
         print(f"  Models: Monte Carlo only  (run 'train' to enable ML models)")
     print(f"{'='*80}\n")
@@ -75,21 +72,12 @@ def _print_predictions(pred_df: pd.DataFrame, round_number: int) -> None:
         q90        = row.get("q90", 0)
 
         if has_ml:
-            p_ml  = row.get("pHomeWin_ml", 0)
-            p_rf  = row.get("pHomeWin_rf", 0)
-            p_nn  = row.get("pHomeWin_nn", 0)
-
+            p_ml = row.get("pHomeWin_ml", 0)
             winner = home if p_ml > 0.5 else away
             conf = max(p_ml, 1 - p_ml) * 100
 
             print(f"  {home:>5s}  vs  {away:<5s}")
-            if has_xgb:
-                p_xgb = row.get("pHomeWin_xgb", 0)
-                print(f"    P(Home Win):  ML: {p_ml:.1%}  "
-                      f"(RF: {p_rf:.1%}  XGB: {p_xgb:.1%}  NN: {p_nn:.1%})")
-            else:
-                print(f"    P(Home Win):  ML: {p_ml:.1%}  (RF: {p_rf:.1%}  NN: {p_nn:.1%})")
-            print(f"    P(Home Win):  MC: {p_home_mc:.1%}")
+            print(f"    P(Home Win):  ML: {p_ml:.1%}   MC: {p_home_mc:.1%}")
         else:
             winner = home if p_home_mc > 0.5 else away
             conf = max(p_home_mc, 1 - p_home_mc) * 100
@@ -136,7 +124,7 @@ def main(argv=None):
 
     if args.cmd == "train":
         season = int(args.season)
-        print(f"[train] Training ML models (RF + XGBoost + NN) for season {season} "
+        print(f"[train] Training ML models (LogReg + Ridge) for season {season} "
               f"(+ {cfg.season.history_seasons} history seasons) …")
         metrics = train_ml_pipeline(cache, cfg, current_season=season, verbose=True)
         print(f"[train] Done. Models at: {Path(cfg.ml.model_dir).resolve()}")

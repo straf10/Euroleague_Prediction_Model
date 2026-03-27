@@ -17,6 +17,10 @@ src/euroleague_sim/features/__init__.py
 src/euroleague_sim/features/elo.py
 src/euroleague_sim/features/net_rating.py
 src/euroleague_sim/features/possessions.py
+src/euroleague_sim/ml/__init__.py
+src/euroleague_sim/ml/features.py
+src/euroleague_sim/ml/predict.py
+src/euroleague_sim/ml/train.py
 src/euroleague_sim/sim/__init__.py
 src/euroleague_sim/sim/engine.py
 src/euroleague_sim/sim/model.py

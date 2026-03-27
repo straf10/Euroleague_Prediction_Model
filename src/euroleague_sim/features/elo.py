@@ -152,31 +152,3 @@ def build_current_season_elo(
         k=k,
         home_advantage=home_advantage,
     )
-
-
-def build_elo_prior_from_past_seasons(
-    season_games: Dict[int, pd.DataFrame],
-    current_season: int,
-    base: float = 1500.0,
-    k: float = 20.0,
-    home_advantage: float = 65.0,
-    blend_recent: float = 0.65,
-    blend_older: float = 0.35,
-) -> pd.DataFrame:
-    """Build Elo prior table (Team, EloPrior) for the current season.
-
-    Convenience wrapper that returns a DataFrame compatible with pipeline usage.
-    """
-    elo_hist = build_elo_hist(
-        season_games=season_games,
-        current_season=current_season,
-        base=base, k=k, home_advantage=home_advantage,
-        blend_recent=blend_recent, blend_older=blend_older,
-    )
-    if not elo_hist:
-        return pd.DataFrame(columns=["Team", "EloPrior"])
-
-    return pd.DataFrame({
-        "Team": list(elo_hist.keys()),
-        "EloPrior": list(elo_hist.values()),
-    })

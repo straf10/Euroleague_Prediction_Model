@@ -15,12 +15,13 @@ The current ML pipeline is strictly linear:
 | **Ridge Regression** | Linear regressor for home-away point margin |
 | **Monte Carlo** | `margin ~ Normal(mu, sigma)` with configurable simulation count |
 
-### Features (24 total)
+### Features (10 total)
 
-- **Differential:** `net_rtg_diff`, `elo_diff_scaled`, `off_matchup`, `def_matchup`, `win_pct_diff`, `form_diff`, `pace_diff`
-- **Four Factors matchup differentials:** `home_off_efg_matchup`, `home_off_tov_matchup`, `home_off_orb_matchup`, `home_off_ftr_matchup`, `away_off_efg_matchup`, `away_off_tov_matchup`, `away_off_orb_matchup`, `away_off_ftr_matchup`
-- **Home absolute:** `home_off_rtg`, `home_def_rtg`, `home_win_pct`, `elo_home`
-- **Away absolute:** `away_off_rtg`, `away_def_rtg`, `away_win_pct`, `elo_away`
+Defined in `src/euroleague_sim/ml/features.py` as `FEATURE_COLS`:
+
+- **Rating gap:** `elo_diff_scaled`
+- **Four-factors matchups (home offense vs away defense):** `home_off_efg_matchup`, `home_off_tov_matchup`, `home_off_orb_matchup`, `home_off_ftr_matchup`
+- **Four-factors matchups (away offense vs home defense):** `away_off_efg_matchup`, `away_off_tov_matchup`, `away_off_orb_matchup`, `away_off_ftr_matchup`
 - **Context:** `round_progress`
 
 ### Supporting Components
@@ -30,6 +31,27 @@ The current ML pipeline is strictly linear:
 | **Net Rating** | Offensive/Defensive ratings per 100 possessions with home/away splits and early-season shrinkage |
 | **Elo** | Historic prior from past seasons, then updated game-by-game in current season |
 | **Possessions** | Estimated via `FGA + 0.44*FTA - OREB + TOV` per team-game |
+
+## Conclusion from current training data
+
+**Home court in EuroLeague, as read through this model on the data we actually trained on, looks fundamentally like a defensive story.** Home teams do not need to “shoot the lights out” to carry an edge. The fitted linear models assign substantial weight to matchup structure where the home side’s environment and familiarity show up as **pressure on the visitor**: higher turnover pressure, contested shots (eFG defense), and control of the glass (offensive vs defensive rebounding matchups)—the same mechanisms fans describe as “suffocating defense,” now visible in standardized coefficients rather than only in narrative.
+
+Simplifying the feature set makes this easier to see: with fewer, interpretable inputs, the logistic head’s weights highlight **which** stable team traits move `P(home win)`, and the four-factors-style matchup columns are where defensive leverage lives. That is an insight **supported by the current training window and diagnostics below**, not an axiom; retrain after major rule or league-quality shifts and re-check the coefficient panel.
+
+## Training diagnostics (evidence)
+
+After `euroleague-sim train`, the pipeline writes **`plots/training_diagnostics.png`** (see [`src/euroleague_sim/ml/plots.py`](src/euroleague_sim/ml/plots.py)). Use it to sanity-check both model behaviour and the home-court hypothesis:
+
+| Panel | What it shows | Why it matters for the hypothesis |
+|---|---|---|
+| **Top-left** | Logistic regression coefficients on **standardized** features (green → higher `P(home win)`, red → lower). | **Primary evidence:** large-magnitude bars on turnover, rebounding, and eFG **matchup** features indicate that *defensive* execution and pressure (not raw home offensive explosion) dominate the linear signal for who wins. |
+| **Top-right** | Pearson correlation heatmap across training features. | Shows redundancy and shared variance; helps confirm that a slim feature set is not hiding a single collinear “trick” feature. |
+| **Bottom-left** | **Probability calibration** using **time-series cross-validated** out-of-fold probabilities. | Checks that predicted home-win rates line up with realized frequencies **without** peeking at the future—guards against a hollow “always pick home” shortcut. |
+| **Bottom-right** | Ridge **actual vs predicted margin** (in-sample scatter). | Validates that the margin model is not only classifying wins but tracking point differential in a structured way. |
+
+![Training diagnostics (2×2 figure from `train`)](plots/training_diagnostics.png)
+
+Regenerate this file whenever you retrain so the README’s figure stays aligned with the models in `models/`.
 
 ## Setup
 
@@ -125,33 +147,6 @@ Key columns:
 
 Raw and processed data are cached in `data_cache/` as pickle and JSON files.
 Use `update-data --force` to re-download and rebuild.
-
-## Project Structure
-
-```
-src/euroleague_sim/
-  config.py            # project parameters (Elo, MC, shrinkage, ML)
-  pipeline.py          # fetch -> features -> Elo -> train -> predict orchestration
-  cli.py               # commands: update-data, train, predict
-  data/
-    fetch.py           # euroleague-api wrapper + v3 HTTP fallback
-    cache.py           # pickle/JSON filesystem cache
-  features/
-    possessions.py     # team possessions from boxscore data
-    net_rating.py      # OffRtg/DefRtg/NetRtg per 100 + splits + shrinkage
-    elo.py             # Elo engine: historic blend + current-season updates
-  ml/
-    features.py        # 24-feature engineering for train/predict modes
-    train.py           # train Logistic Regression + Ridge
-    predict.py         # LinearPredictor: load and infer with saved models
-  sim/
-    model.py           # matchup features (A, B) from ratings and Elo
-    engine.py          # Monte Carlo margin simulation
-models/                # scaler.joblib, logreg.joblib, ridge.joblib, metadata.json
-plots/                 # training_diagnostics.png (from `train`)
-outputs/               # prediction CSVs
-data_cache/            # cached raw + processed datasets
-```
 
 ## Pipeline Flow
 

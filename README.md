@@ -54,6 +54,8 @@ pip install -e .
 
 ## Quick Start
 
+Use the packaged CLI as the single entry point (`euroleague-sim`); no separate wrapper scripts are required.
+
 ### 1. Fetch and cache data
 
 Downloads the selected season plus prior seasons (default `--history 2`):

@@ -20,6 +20,7 @@ FEATURE_COLS: List[str] = [
     "net_orb",            # (home off ORB% − away def DRB%) − (away off ORB% − home def DRB%)
     "net_ftr",            # (home off FT rate − away def FT rate) − (away off FT rate − home def FT rate)
     "round_progress",     # round / max_rounds
+    "net_form_wma5",      # 5-game weighted moving average of NetPer100 (home − away)
 ]
 
 
@@ -36,6 +37,17 @@ def _safe(val, default: float = 0.0) -> float:
         return v if np.isfinite(v) else default
     except (TypeError, ValueError):
         return default
+
+
+def _wma5_rolling(arr: np.ndarray) -> float:
+    """Linearly-weighted average over *arr*, most recent weighted highest.
+
+    With *n* values the weights are ``[1, 2, ..., n]`` so the newest value
+    (last element) gets weight *n*.  Denominator is ``n*(n+1)/2``.
+    """
+    n = len(arr)
+    w = np.arange(1, n + 1, dtype=float)
+    return np.dot(arr, w) / w.sum()
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +73,11 @@ def compute_cumulative_features(team_game_df: pd.DataFrame) -> pd.DataFrame:
     df["cum_wins"] = g["Win"].transform(lambda x: x.shift(1).expanding().sum())
     df["form"]     = g["NetPer100"].transform(
         lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+    )
+    df["form_wma5"] = g["NetPer100"].transform(
+        lambda x: x.shift(1).rolling(5, min_periods=1).apply(
+            _wma5_rolling, raw=True,
+        )
     )
 
     df["cum_off_rtg"] = np.where(
@@ -262,6 +279,14 @@ def build_training_dataset(
             away_orb_matchup = away_off_orb - home_def_drb
             away_ftr_matchup = away_off_ftr - home_def_ftr
 
+            h_form = h_row.get("form_wma5")
+            a_form = a_row.get("form_wma5")
+            if (h_form is not None and a_form is not None
+                    and np.isfinite(float(h_form)) and np.isfinite(float(a_form))):
+                net_form_wma5 = float(h_form) - float(a_form)
+            else:
+                net_form_wma5 = np.nan
+
             feat: dict = {
                 "elo_diff_scaled": (elo_h - elo_a) / 25.0,
                 "net_efg": home_efg_matchup - away_efg_matchup,
@@ -269,6 +294,7 @@ def build_training_dataset(
                 "net_orb": home_orb_matchup - away_orb_matchup,
                 "net_ftr": home_ftr_matchup - away_ftr_matchup,
                 "round_progress":  rnd / max_rounds,
+                "net_form_wma5": net_form_wma5,
                 # Targets
                 "home_win": int(float(game["home_points"]) > float(game["away_points"])),
                 "margin":   float(game["margin_home"]),
@@ -279,7 +305,9 @@ def build_training_dataset(
             }
             all_rows.append(feat)
 
-    return pd.DataFrame(all_rows)
+    result = pd.DataFrame(all_rows)
+    result = result.dropna(subset=["net_form_wma5"])
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +345,12 @@ def build_prediction_features(
         for team, grp in team_game_df.groupby("Team"):
             grp_sorted = grp.sort_values(["Round", "Gamecode"])
             stats: Dict[str, float] = {}
+
+            if "NetPer100" in grp_sorted.columns:
+                tail = grp_sorted["NetPer100"].dropna().tail(5).values
+                if len(tail) > 0:
+                    stats["form_wma5"] = _wma5_rolling(tail)
+
             # Four Factors from full-season cumulative raw totals
             if _ff_avail:
                 t_fga = float(grp_sorted["FGA"].sum())
@@ -388,6 +422,13 @@ def build_prediction_features(
         away_orb_matchup = a_s["off_orb_pct"] - h_s["def_drb_pct"]
         away_ftr_matchup = a_s["off_ft_rate"] - h_s["def_ft_rate"]
 
+        h_form = h_s.get("form_wma5")
+        a_form = a_s.get("form_wma5")
+        if h_form is not None and a_form is not None:
+            net_form_wma5 = h_form - a_form
+        else:
+            net_form_wma5 = np.nan
+
         feat: dict = {
             "elo_diff_scaled": (elo_h - elo_a) / 25.0,
             "net_efg": home_efg_matchup - away_efg_matchup,
@@ -395,6 +436,7 @@ def build_prediction_features(
             "net_orb": home_orb_matchup - away_orb_matchup,
             "net_ftr": home_ftr_matchup - away_ftr_matchup,
             "round_progress":  round_number / max_rounds,
+            "net_form_wma5": net_form_wma5,
         }
         rows.append(feat)
 

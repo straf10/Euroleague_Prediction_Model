@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+import numpy as np
 import pandas as pd
 
 from .config import ProjectConfig
@@ -396,10 +397,24 @@ def predict_next_round(
             round_number=int(round_number),
             elo_base=cfg.elo.base,
         )
-        ml_pred = predictor.predict(ml_features)
-        matchup["pHomeWin_ml"] = ml_pred["pHomeWin_ml"].values
-        matchup["margin_ml"]   = ml_pred["margin_ml"].values
-        ml_margin = ml_pred["margin_ml"].values
+        has_form = ml_features["net_form_wma5"].notna()
+
+        if has_form.any():
+            ml_pred = predictor.predict(ml_features.loc[has_form])
+            matchup.loc[has_form.values, "pHomeWin_ml"] = ml_pred["pHomeWin_ml"].values
+            matchup.loc[has_form.values, "margin_ml"]   = ml_pred["margin_ml"].values
+
+        if has_form.all():
+            ml_margin = matchup["margin_ml"].values
+        elif has_form.any():
+            a_vals = matchup["A"].to_numpy(dtype=float)
+            b_vals = matchup["B"].to_numpy(dtype=float)
+            fallback = cfg.mc.alpha1 * a_vals + cfg.mc.alpha2 * b_vals + cfg.mc.alpha3
+            ml_margin = np.where(
+                has_form.values,
+                matchup["margin_ml"].values,
+                fallback,
+            )
 
     # 6) Monte Carlo simulation
     sigma_eff = cfg.mc.sigma

@@ -16,8 +16,7 @@ The figure below is produced when you run `euroleague-sim train` (saved as `plot
 
 
 
-## The 6 features
-=======
+## The 7 features
 
 These are the columns fed to the ML models (see `src/euroleague_sim/ml/features.py`, `FEATURE_COLS`):
 
@@ -27,6 +26,7 @@ These are the columns fed to the ML models (see `src/euroleague_sim/ml/features.
 4. `net_orb`
 5. `net_ftr`
 6. `round_progress`
+7. `net_form_wma5` -- 5-game weighted moving average of NetPer100 (home minus away), capturing recent form with linear decay weights [5, 4, 3, 2, 1]
 
 ## How to run
 
@@ -47,6 +47,12 @@ pip install -e .
 euroleague-sim update-data --season 2025
 euroleague-sim train --season 2025
 euroleague-sim predict --season 2025 --round next
+```
+
+To re-fetch data and refresh the cache, use:
+
+```bash
+euroleague-sim update-data --season 2025 --force
 ```
 
 Optional: predict a fixed round or change simulation count:

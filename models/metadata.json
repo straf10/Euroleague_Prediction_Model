@@ -5,37 +5,40 @@
     "net_tov",
     "net_orb",
     "net_ftr",
-    "round_progress"
+    "round_progress",
+    "net_form_wma5"
   ],
   "metrics": {
-    "n_train_samples": 993,
-    "n_features": 6,
-    "home_win_base_rate": 0.6354481369587109,
-    "best_logreg_C": 0.1,
+    "n_train_samples": 857,
+    "n_features": 7,
+    "home_win_base_rate": 0.6382730455075846,
+    "best_logreg_C": 10.0,
     "best_ridge_alpha": 50.0,
-    "logreg_cv_accuracy": 0.650909090909091,
-    "logreg_train_accuracy": 0.648539778449144,
-    "logreg_brier": 0.2178068426618057,
-    "logreg_logloss": 0.6245666925099779,
-    "ridge_margin_mae": 9.164975386065025,
-    "ridge_margin_rmse": 11.839243052020885
+    "logreg_cv_accuracy": 0.6450704225352113,
+    "logreg_train_accuracy": 0.6581096849474912,
+    "logreg_brier": 0.21535599953143186,
+    "logreg_logloss": 0.619293755445558,
+    "ridge_margin_mae": 9.132336530138357,
+    "ridge_margin_rmse": 11.86028481195676
   },
   "logreg_coefficients": {
-    "elo_diff_scaled": 0.47049804870686035,
-    "net_efg": 0.055995135720999484,
-    "net_tov": -0.15543383721917395,
-    "net_orb": 0.06512555242396761,
-    "net_ftr": 0.04706108034586602,
-    "round_progress": -0.009019769405836684
+    "elo_diff_scaled": 0.4400477454350083,
+    "net_efg": 0.06447188253204425,
+    "net_tov": -0.21162796504401754,
+    "net_orb": 0.05934934404502069,
+    "net_ftr": 0.03976880023080938,
+    "round_progress": -0.023551024592861923,
+    "net_form_wma5": 0.10502949560301224
   },
-  "logreg_intercept": 0.5916630999531685,
+  "logreg_intercept": 0.6154559748735103,
   "ridge_coefficients": {
-    "elo_diff_scaled": 2.782806281114197,
-    "net_efg": 0.33773028390228,
-    "net_tov": -1.1991532264342404,
-    "net_orb": 0.30220189857521884,
-    "net_ftr": 0.21874325709845305,
-    "round_progress": -0.011658428021185526
+    "elo_diff_scaled": 2.20178861455635,
+    "net_efg": 0.5381216154847112,
+    "net_tov": -1.4582493572486666,
+    "net_orb": 0.5058913225283763,
+    "net_ftr": 0.27309796264292796,
+    "round_progress": -0.1474673942992323,
+    "net_form_wma5": 0.9180561539395927
   },
-  "ridge_intercept": 3.5518630412890233
+  "ridge_intercept": 3.6779463243873978
 }

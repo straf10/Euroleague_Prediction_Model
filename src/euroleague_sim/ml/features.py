@@ -14,15 +14,7 @@ import numpy as np
 
 # ---- Ordered list of feature columns consumed by the ML models ----
 FEATURE_COLS: List[str] = [
-    # Differential features
-    "net_rtg_diff",       # home net rating (split) − away net rating (split)
     "elo_diff_scaled",    # (elo_home − elo_away) / 25
-    "off_matchup",        # home_off − away_def  (home scoring advantage)
-    "def_matchup",        # away_off − home_def  (away scoring advantage)
-    "win_pct_diff",       # home win% − away win%
-    "form_diff",          # home last-5 NetPer100 − away last-5 NetPer100
-    "pace_diff",          # home possessions/game − away possessions/game
-    # Four Factors matchup differentials
     "home_off_efg_matchup",  # home off eFG% − away def eFG%
     "home_off_tov_matchup",  # home off TOV% − away def TOV%
     "home_off_orb_matchup",  # home off ORB% − away def DRB%
@@ -31,17 +23,6 @@ FEATURE_COLS: List[str] = [
     "away_off_tov_matchup",  # away off TOV% − home def TOV%
     "away_off_orb_matchup",  # away off ORB% − home def DRB%
     "away_off_ftr_matchup",  # away off FT rate − home def FT rate
-    # Absolute – home team
-    "home_off_rtg",
-    "home_def_rtg",
-    "home_win_pct",
-    "elo_home",
-    # Absolute – away team
-    "away_off_rtg",
-    "away_def_rtg",
-    "away_win_pct",
-    "elo_away",
-    # Context
     "round_progress",     # round / max_rounds
 ]
 
@@ -258,25 +239,6 @@ def build_training_dataset(
                 elo_h = float(elo_rows.iloc[0]["elo_home_pre"])
                 elo_a = float(elo_rows.iloc[0]["elo_away_pre"])
 
-            # Ratings – prefer split, fall back to overall
-            home_off = _safe(h_row.get("hs_off_rtg"),
-                             _safe(h_row.get("cum_off_rtg"), 100.0))
-            home_def = _safe(h_row.get("hs_def_rtg"),
-                             _safe(h_row.get("cum_def_rtg"), 100.0))
-            away_off = _safe(a_row.get("as_off_rtg"),
-                             _safe(a_row.get("cum_off_rtg"), 100.0))
-            away_def = _safe(a_row.get("as_def_rtg"),
-                             _safe(a_row.get("cum_def_rtg"), 100.0))
-
-            home_net = home_off - home_def
-            away_net = away_off - away_def
-
-            home_wpct = _safe(h_row.get("cum_win_pct"), 0.5)
-            away_wpct = _safe(a_row.get("cum_win_pct"), 0.5)
-            home_form = _safe(h_row.get("form"), 0.0)
-            away_form = _safe(a_row.get("form"), 0.0)
-            home_pace = _safe(h_row.get("cum_pace"), 72.0)
-            away_pace = _safe(a_row.get("cum_pace"), 72.0)
             home_off_efg = _safe(h_row.get("cum_off_efg"), 0.50)
             home_off_tov = _safe(h_row.get("cum_off_tov_pct"), 0.15)
             home_off_orb = _safe(h_row.get("cum_off_orb_pct"), 0.25)
@@ -296,14 +258,7 @@ def build_training_dataset(
             away_def_ftr = _safe(a_row.get("cum_def_ft_rate"), 0.30)
 
             feat: dict = {
-                # Differential
-                "net_rtg_diff":    home_net - away_net,
                 "elo_diff_scaled": (elo_h - elo_a) / 25.0,
-                "off_matchup":     home_off - away_def,
-                "def_matchup":     away_off - home_def,
-                "win_pct_diff":    home_wpct - away_wpct,
-                "form_diff":       home_form - away_form,
-                "pace_diff":       home_pace - away_pace,
                 "home_off_efg_matchup": home_off_efg - away_def_efg,
                 "home_off_tov_matchup": home_off_tov - away_def_tov,
                 "home_off_orb_matchup": home_off_orb - away_def_drb,
@@ -312,17 +267,6 @@ def build_training_dataset(
                 "away_off_tov_matchup": away_off_tov - home_def_tov,
                 "away_off_orb_matchup": away_off_orb - home_def_drb,
                 "away_off_ftr_matchup": away_off_ftr - home_def_ftr,
-                # Absolute – home
-                "home_off_rtg":    home_off,
-                "home_def_rtg":    home_def,
-                "home_win_pct":    home_wpct,
-                "elo_home":        elo_h,
-                # Absolute – away
-                "away_off_rtg":    away_off,
-                "away_def_rtg":    away_def,
-                "away_win_pct":    away_wpct,
-                "elo_away":        elo_a,
-                # Context
                 "round_progress":  rnd / max_rounds,
                 # Targets
                 "home_win": int(float(game["home_points"]) > float(game["away_points"])),
@@ -352,14 +296,9 @@ def build_prediction_features(
 ) -> pd.DataFrame:
     """Build the feature matrix for upcoming (unplayed) games.
 
-    Uses the full-season cumulative ``team_ratings_df`` (with home/away splits)
-    and current Elo values – same data available at prediction time.
+    Uses current Elo values and full-season Four Factors from ``team_game_df``.
     """
-    tr = (
-        team_ratings_df.set_index("Team")
-        if "Team" in team_ratings_df.columns
-        else team_ratings_df
-    )
+    _ = team_ratings_df  # kept for API compatibility with existing pipeline call sites
 
     # Per-team aggregate stats from team_game_df
     _ff_pred_cols = [
@@ -376,14 +315,7 @@ def build_prediction_features(
     if team_game_df is not None and not team_game_df.empty:
         for team, grp in team_game_df.groupby("Team"):
             grp_sorted = grp.sort_values(["Round", "Gamecode"])
-            n = len(grp_sorted)
-            wins = (grp_sorted["PointsFor"] > grp_sorted["PointsAgainst"]).sum()
-            wpct = float(wins / n) if n > 0 else 0.5
-            form = float(grp_sorted["NetPer100"].iloc[-5:].mean()) if n >= 1 else 0.0
-            pace = float(grp_sorted["Possessions"].mean()) if n >= 1 else 72.0
-            stats: Dict[str, float] = {
-                "win_pct": wpct, "form": form, "pace": pace,
-            }
+            stats: Dict[str, float] = {}
             # Four Factors from full-season cumulative raw totals
             if _ff_avail:
                 t_fga = float(grp_sorted["FGA"].sum())
@@ -431,7 +363,6 @@ def build_prediction_features(
             team_stats[str(team)] = stats
 
     _default_stats: Dict[str, float] = {
-        "win_pct": 0.5, "form": 0.0, "pace": 72.0,
         "off_efg": 0.50, "off_tov_pct": 0.15, "off_orb_pct": 0.25, "off_ft_rate": 0.30,
         "def_efg": 0.50, "def_tov_pct": 0.15, "def_drb_pct": 0.75, "def_ft_rate": 0.30,
     }
@@ -441,35 +372,14 @@ def build_prediction_features(
         ht = str(game["home_team"])
         at = str(game["away_team"])
 
-        # Ratings from team_ratings (has home/away splits from aggregate_team_ratings)
-        def _get(team: str, col: str, default: float = 100.0) -> float:
-            if team not in tr.index or col not in tr.columns:
-                return default
-            v = tr.at[team, col]
-            return _safe(v, default)
-
-        home_off = _get(ht, "Home_OffPer100")
-        home_def = _get(ht, "Home_DefPer100")
-        away_off = _get(at, "Away_OffPer100")
-        away_def = _get(at, "Away_DefPer100")
-
         elo_h = float(current_elos.get(ht, elo_base))
         elo_a = float(current_elos.get(at, elo_base))
 
         h_s = team_stats.get(ht, _default_stats)
         a_s = team_stats.get(at, _default_stats)
 
-        home_net = home_off - home_def
-        away_net = away_off - away_def
-
         feat: dict = {
-            "net_rtg_diff":    home_net - away_net,
             "elo_diff_scaled": (elo_h - elo_a) / 25.0,
-            "off_matchup":     home_off - away_def,
-            "def_matchup":     away_off - home_def,
-            "win_pct_diff":    h_s["win_pct"] - a_s["win_pct"],
-            "form_diff":       h_s["form"] - a_s["form"],
-            "pace_diff":       h_s["pace"] - a_s["pace"],
             "home_off_efg_matchup": h_s["off_efg"] - a_s["def_efg"],
             "home_off_tov_matchup": h_s["off_tov_pct"] - a_s["def_tov_pct"],
             "home_off_orb_matchup": h_s["off_orb_pct"] - a_s["def_drb_pct"],
@@ -478,14 +388,6 @@ def build_prediction_features(
             "away_off_tov_matchup": a_s["off_tov_pct"] - h_s["def_tov_pct"],
             "away_off_orb_matchup": a_s["off_orb_pct"] - h_s["def_drb_pct"],
             "away_off_ftr_matchup": a_s["off_ft_rate"] - h_s["def_ft_rate"],
-            "home_off_rtg":    home_off,
-            "home_def_rtg":    home_def,
-            "home_win_pct":    h_s["win_pct"],
-            "elo_home":        elo_h,
-            "away_off_rtg":    away_off,
-            "away_def_rtg":    away_def,
-            "away_win_pct":    a_s["win_pct"],
-            "elo_away":        elo_a,
             "round_progress":  round_number / max_rounds,
         }
         rows.append(feat)

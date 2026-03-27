@@ -328,7 +328,7 @@ def train_ml_pipeline(
         ridge_alpha=cfg.ml.ridge_alpha,
         cv_folds=cfg.ml.cv_folds,
         verbose=verbose,
-        diagnostic_plot_path=model_dir / "training_diagnostics.png",
+        diagnostic_plot_path=Path("plots") / "training_diagnostics.png",
     )
     return metrics
 

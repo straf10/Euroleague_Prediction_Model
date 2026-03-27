@@ -146,6 +146,7 @@ src/euroleague_sim/
     model.py           # matchup features (A, B) from ratings and Elo
     engine.py          # Monte Carlo margin simulation
 models/                # scaler.joblib, logreg.joblib, ridge.joblib, metadata.json
+plots/                 # training_diagnostics.png (from `train`)
 outputs/               # prediction CSVs
 data_cache/            # cached raw + processed datasets
 ```
@@ -161,7 +162,7 @@ data_cache/            # cached raw + processed datasets
                    Build point-in-time dataset (no lookahead)
                    Train Logistic Regression + Ridge
                    Evaluate with TimeSeriesSplit cross-validation
-                   Save artefacts to models/
+                   Save models to models/; diagnostics PNG to plots/
 
 3. predict         Load current features + Elo
                    Fetch target round schedule

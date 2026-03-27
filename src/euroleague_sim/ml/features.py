@@ -22,6 +22,15 @@ FEATURE_COLS: List[str] = [
     "win_pct_diff",       # home win% − away win%
     "form_diff",          # home last-5 NetPer100 − away last-5 NetPer100
     "pace_diff",          # home possessions/game − away possessions/game
+    # Four Factors matchup differentials
+    "home_off_efg_matchup",  # home off eFG% − away def eFG%
+    "home_off_tov_matchup",  # home off TOV% − away def TOV%
+    "home_off_orb_matchup",  # home off ORB% − away def DRB%
+    "home_off_ftr_matchup",  # home off FT rate − away def FT rate
+    "away_off_efg_matchup",  # away off eFG% − home def eFG%
+    "away_off_tov_matchup",  # away off TOV% − home def TOV%
+    "away_off_orb_matchup",  # away off ORB% − home def DRB%
+    "away_off_ftr_matchup",  # away off FT rate − home def FT rate
     # Absolute – home team
     "home_off_rtg",
     "home_def_rtg",
@@ -92,33 +101,76 @@ def compute_cumulative_features(team_game_df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # ---------- Four Factors cumulative ----------
-    _ff_cols = ["FGA", "FGM2", "FGM3", "FTA", "ORB", "TOV", "opp_DRB"]
+    _ff_cols = [
+        "FGM", "FGA", "FGM3", "ORB", "DRB", "TOV", "FTA",
+        "opp_DRB", "opp_ORB", "opp_FGM", "opp_FGA", "opp_FGM3", "opp_TOV", "opp_FTA",
+    ]
     _has_ff = all(c in df.columns for c in _ff_cols)
     if _has_ff:
         for c in _ff_cols:
             df[f"cum_{c}"] = g[c].transform(
                 lambda x: x.shift(1).expanding().sum()
             )
-        _fga = df["cum_FGA"]
-        df["cum_efg"] = np.where(
-            _fga > 0,
-            (df["cum_FGM2"].fillna(0) + 1.5 * df["cum_FGM3"].fillna(0)) / _fga,
+        _off_fga = df["cum_FGA"].fillna(0)
+        _off_fgm = df["cum_FGM"].fillna(0)
+        _off_fgm3 = df["cum_FGM3"].fillna(0)
+        _off_fta = df["cum_FTA"].fillna(0)
+        _off_tov = df["cum_TOV"].fillna(0)
+        _off_orb = df["cum_ORB"].fillna(0)
+        _opp_drb = df["cum_opp_DRB"].fillna(0)
+
+        _def_fga = df["cum_opp_FGA"].fillna(0)
+        _def_fgm = df["cum_opp_FGM"].fillna(0)
+        _def_fgm3 = df["cum_opp_FGM3"].fillna(0)
+        _def_fta = df["cum_opp_FTA"].fillna(0)
+        _def_tov = df["cum_opp_TOV"].fillna(0)
+        _def_drb = df["cum_DRB"].fillna(0)
+        _opp_orb = df["cum_opp_ORB"].fillna(0)
+
+        # Rates are derived from cumulative raw counts (not mean of game-level percentages).
+        df["cum_off_efg"] = np.where(
+            _off_fga > 0,
+            (_off_fgm + 0.5 * _off_fgm3) / _off_fga,
             np.nan,
         )
-        df["cum_tov_pct"] = np.where(
-            df["cum_poss"] > 0,
-            df["cum_TOV"].fillna(0) / df["cum_poss"],
+        _off_tov_denom = _off_fga + 0.44 * _off_fta + _off_tov
+        df["cum_off_tov_pct"] = np.where(
+            _off_tov_denom > 0,
+            _off_tov / _off_tov_denom,
             np.nan,
         )
-        _orb_total = df["cum_ORB"].fillna(0) + df["cum_opp_DRB"].fillna(0)
-        df["cum_orb_pct"] = np.where(
-            _orb_total > 0,
-            df["cum_ORB"].fillna(0) / _orb_total,
+        _off_orb_denom = _off_orb + _opp_drb
+        df["cum_off_orb_pct"] = np.where(
+            _off_orb_denom > 0,
+            _off_orb / _off_orb_denom,
             np.nan,
         )
-        df["cum_ft_rate"] = np.where(
-            _fga > 0,
-            df["cum_FTA"].fillna(0) / _fga,
+        df["cum_off_ft_rate"] = np.where(
+            _off_fga > 0,
+            _off_fta / _off_fga,
+            np.nan,
+        )
+
+        df["cum_def_efg"] = np.where(
+            _def_fga > 0,
+            (_def_fgm + 0.5 * _def_fgm3) / _def_fga,
+            np.nan,
+        )
+        _def_tov_denom = _def_fga + 0.44 * _def_fta + _def_tov
+        df["cum_def_tov_pct"] = np.where(
+            _def_tov_denom > 0,
+            _def_tov / _def_tov_denom,
+            np.nan,
+        )
+        _def_drb_denom = _def_drb + _opp_orb
+        df["cum_def_drb_pct"] = np.where(
+            _def_drb_denom > 0,
+            _def_drb / _def_drb_denom,
+            np.nan,
+        )
+        df["cum_def_ft_rate"] = np.where(
+            _def_fga > 0,
+            _def_fta / _def_fga,
             np.nan,
         )
 
@@ -225,6 +277,23 @@ def build_training_dataset(
             away_form = _safe(a_row.get("form"), 0.0)
             home_pace = _safe(h_row.get("cum_pace"), 72.0)
             away_pace = _safe(a_row.get("cum_pace"), 72.0)
+            home_off_efg = _safe(h_row.get("cum_off_efg"), 0.50)
+            home_off_tov = _safe(h_row.get("cum_off_tov_pct"), 0.15)
+            home_off_orb = _safe(h_row.get("cum_off_orb_pct"), 0.25)
+            home_off_ftr = _safe(h_row.get("cum_off_ft_rate"), 0.30)
+            home_def_efg = _safe(h_row.get("cum_def_efg"), 0.50)
+            home_def_tov = _safe(h_row.get("cum_def_tov_pct"), 0.15)
+            home_def_drb = _safe(h_row.get("cum_def_drb_pct"), 0.75)
+            home_def_ftr = _safe(h_row.get("cum_def_ft_rate"), 0.30)
+
+            away_off_efg = _safe(a_row.get("cum_off_efg"), 0.50)
+            away_off_tov = _safe(a_row.get("cum_off_tov_pct"), 0.15)
+            away_off_orb = _safe(a_row.get("cum_off_orb_pct"), 0.25)
+            away_off_ftr = _safe(a_row.get("cum_off_ft_rate"), 0.30)
+            away_def_efg = _safe(a_row.get("cum_def_efg"), 0.50)
+            away_def_tov = _safe(a_row.get("cum_def_tov_pct"), 0.15)
+            away_def_drb = _safe(a_row.get("cum_def_drb_pct"), 0.75)
+            away_def_ftr = _safe(a_row.get("cum_def_ft_rate"), 0.30)
 
             feat: dict = {
                 # Differential
@@ -235,6 +304,14 @@ def build_training_dataset(
                 "win_pct_diff":    home_wpct - away_wpct,
                 "form_diff":       home_form - away_form,
                 "pace_diff":       home_pace - away_pace,
+                "home_off_efg_matchup": home_off_efg - away_def_efg,
+                "home_off_tov_matchup": home_off_tov - away_def_tov,
+                "home_off_orb_matchup": home_off_orb - away_def_drb,
+                "home_off_ftr_matchup": home_off_ftr - away_def_ftr,
+                "away_off_efg_matchup": away_off_efg - home_def_efg,
+                "away_off_tov_matchup": away_off_tov - home_def_tov,
+                "away_off_orb_matchup": away_off_orb - home_def_drb,
+                "away_off_ftr_matchup": away_off_ftr - home_def_ftr,
                 # Absolute – home
                 "home_off_rtg":    home_off,
                 "home_def_rtg":    home_def,
@@ -285,7 +362,10 @@ def build_prediction_features(
     )
 
     # Per-team aggregate stats from team_game_df
-    _ff_pred_cols = ["FGA", "FGM2", "FGM3", "FTA", "ORB", "TOV", "opp_DRB"]
+    _ff_pred_cols = [
+        "FGM", "FGA", "FGM3", "ORB", "DRB", "TOV", "FTA",
+        "opp_DRB", "opp_ORB", "opp_FGM", "opp_FGA", "opp_FGM3", "opp_TOV", "opp_FTA",
+    ]
     _ff_avail = (
         team_game_df is not None
         and not team_game_df.empty
@@ -304,34 +384,56 @@ def build_prediction_features(
             stats: Dict[str, float] = {
                 "win_pct": wpct, "form": form, "pace": pace,
             }
-            # Four Factors from full-season cumulative totals
+            # Four Factors from full-season cumulative raw totals
             if _ff_avail:
                 t_fga = float(grp_sorted["FGA"].sum())
-                t_fgm2 = float(grp_sorted["FGM2"].sum())
+                t_fgm = float(grp_sorted["FGM"].sum())
                 t_fgm3 = float(grp_sorted["FGM3"].sum())
                 t_fta = float(grp_sorted["FTA"].sum())
                 t_orb = float(grp_sorted["ORB"].sum())
+                t_drb = float(grp_sorted["DRB"].sum())
                 t_tov = float(grp_sorted["TOV"].sum())
                 t_opp_drb = float(grp_sorted["opp_DRB"].sum())
-                t_poss = float(grp_sorted["Possessions"].sum())
+                t_opp_orb = float(grp_sorted["opp_ORB"].sum())
+                t_opp_fga = float(grp_sorted["opp_FGA"].sum())
+                t_opp_fgm = float(grp_sorted["opp_FGM"].sum())
+                t_opp_fgm3 = float(grp_sorted["opp_FGM3"].sum())
+                t_opp_tov = float(grp_sorted["opp_TOV"].sum())
+                t_opp_fta = float(grp_sorted["opp_FTA"].sum())
 
-                stats["efg"] = (
-                    (t_fgm2 + 1.5 * t_fgm3) / t_fga if t_fga > 0 else 0.50
+                stats["off_efg"] = (
+                    (t_fgm + 0.5 * t_fgm3) / t_fga if t_fga > 0 else 0.50
                 )
-                stats["tov_pct"] = t_tov / t_poss if t_poss > 0 else 0.15
-                stats["orb_pct"] = (
+                off_tov_denom = t_fga + 0.44 * t_fta + t_tov
+                stats["off_tov_pct"] = t_tov / off_tov_denom if off_tov_denom > 0 else 0.15
+                stats["off_orb_pct"] = (
                     t_orb / (t_orb + t_opp_drb)
                     if (t_orb + t_opp_drb) > 0 else 0.25
                 )
-                stats["ft_rate"] = t_fta / t_fga if t_fga > 0 else 0.30
+                stats["off_ft_rate"] = t_fta / t_fga if t_fga > 0 else 0.30
+
+                stats["def_efg"] = (
+                    (t_opp_fgm + 0.5 * t_opp_fgm3) / t_opp_fga
+                    if t_opp_fga > 0 else 0.50
+                )
+                def_tov_denom = t_opp_fga + 0.44 * t_opp_fta + t_opp_tov
+                stats["def_tov_pct"] = t_opp_tov / def_tov_denom if def_tov_denom > 0 else 0.15
+                stats["def_drb_pct"] = (
+                    t_drb / (t_drb + t_opp_orb)
+                    if (t_drb + t_opp_orb) > 0 else 0.75
+                )
+                stats["def_ft_rate"] = t_opp_fta / t_opp_fga if t_opp_fga > 0 else 0.30
             else:
-                stats.update({"efg": 0.50, "tov_pct": 0.15,
-                              "orb_pct": 0.25, "ft_rate": 0.30})
+                stats.update({
+                    "off_efg": 0.50, "off_tov_pct": 0.15, "off_orb_pct": 0.25, "off_ft_rate": 0.30,
+                    "def_efg": 0.50, "def_tov_pct": 0.15, "def_drb_pct": 0.75, "def_ft_rate": 0.30,
+                })
             team_stats[str(team)] = stats
 
     _default_stats: Dict[str, float] = {
         "win_pct": 0.5, "form": 0.0, "pace": 72.0,
-        "efg": 0.50, "tov_pct": 0.15, "orb_pct": 0.25, "ft_rate": 0.30,
+        "off_efg": 0.50, "off_tov_pct": 0.15, "off_orb_pct": 0.25, "off_ft_rate": 0.30,
+        "def_efg": 0.50, "def_tov_pct": 0.15, "def_drb_pct": 0.75, "def_ft_rate": 0.30,
     }
 
     rows: List[dict] = []
@@ -368,6 +470,14 @@ def build_prediction_features(
             "win_pct_diff":    h_s["win_pct"] - a_s["win_pct"],
             "form_diff":       h_s["form"] - a_s["form"],
             "pace_diff":       h_s["pace"] - a_s["pace"],
+            "home_off_efg_matchup": h_s["off_efg"] - a_s["def_efg"],
+            "home_off_tov_matchup": h_s["off_tov_pct"] - a_s["def_tov_pct"],
+            "home_off_orb_matchup": h_s["off_orb_pct"] - a_s["def_drb_pct"],
+            "home_off_ftr_matchup": h_s["off_ft_rate"] - a_s["def_ft_rate"],
+            "away_off_efg_matchup": a_s["off_efg"] - h_s["def_efg"],
+            "away_off_tov_matchup": a_s["off_tov_pct"] - h_s["def_tov_pct"],
+            "away_off_orb_matchup": a_s["off_orb_pct"] - h_s["def_drb_pct"],
+            "away_off_ftr_matchup": a_s["off_ft_rate"] - h_s["def_ft_rate"],
             "home_off_rtg":    home_off,
             "home_def_rtg":    home_def,
             "home_win_pct":    h_s["win_pct"],

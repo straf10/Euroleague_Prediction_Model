@@ -15,9 +15,10 @@ The current ML pipeline is strictly linear:
 | **Ridge Regression** | Linear regressor for home-away point margin |
 | **Monte Carlo** | `margin ~ Normal(mu, sigma)` with configurable simulation count |
 
-### Features (16 total)
+### Features (24 total)
 
 - **Differential:** `net_rtg_diff`, `elo_diff_scaled`, `off_matchup`, `def_matchup`, `win_pct_diff`, `form_diff`, `pace_diff`
+- **Four Factors matchup differentials:** `home_off_efg_matchup`, `home_off_tov_matchup`, `home_off_orb_matchup`, `home_off_ftr_matchup`, `away_off_efg_matchup`, `away_off_tov_matchup`, `away_off_orb_matchup`, `away_off_ftr_matchup`
 - **Home absolute:** `home_off_rtg`, `home_def_rtg`, `home_win_pct`, `elo_home`
 - **Away absolute:** `away_off_rtg`, `away_def_rtg`, `away_win_pct`, `elo_away`
 - **Context:** `round_progress`
@@ -138,7 +139,7 @@ src/euroleague_sim/
     net_rating.py      # OffRtg/DefRtg/NetRtg per 100 + splits + shrinkage
     elo.py             # Elo engine: historic blend + current-season updates
   ml/
-    features.py        # 16-feature engineering for train/predict modes
+    features.py        # 24-feature engineering for train/predict modes
     train.py           # train Logistic Regression + Ridge
     predict.py         # LinearPredictor: load and infer with saved models
   sim/
@@ -159,7 +160,7 @@ data_cache/            # cached raw + processed datasets
 2. train           Load cached historical features
                    Build point-in-time dataset (no lookahead)
                    Train Logistic Regression + Ridge
-                   Evaluate with cross-validation
+                   Evaluate with TimeSeriesSplit cross-validation
                    Save artefacts to models/
 
 3. predict         Load current features + Elo

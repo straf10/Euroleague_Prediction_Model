@@ -47,7 +47,10 @@ def build_games_with_possessions(
 
     # home/away team codes come from possessions table (Team + Home flag)
     # Four Factors columns (available after possessions rebuild)
-    ff_cols = ["FGA", "FGM2", "FGM3", "FTA", "ORB", "TOV", "opp_DRB"]
+    ff_cols = [
+        "FGA", "FGM", "FGM2", "FGM3", "FTA", "ORB", "DRB", "TOV",
+        "opp_DRB", "opp_ORB", "opp_FGA", "opp_FGM", "opp_FGM3", "opp_FTA", "opp_TOV",
+    ]
     avail_ff = [c for c in ff_cols if c in poss.columns]
 
     base_cols = ["Season", "Gamecode", "Team", "possessions", "possessions_simple"]
@@ -79,14 +82,15 @@ def build_games_with_possessions(
     out["possessions_game"] = out[["home_poss", "away_poss"]].mean(axis=1)
 
     out["margin_home"] = out["home_points"] - out["away_points"]
+    ff_game_cols = [f"home_{c}" for c in avail_ff] + [f"away_{c}" for c in avail_ff]
     return out[
         [
             "Season", "Gamecode", "Phase", "Round",
             "home_team", "away_team",
             "home_points", "away_points",
             "home_poss", "away_poss", "possessions_game",
-            "margin_home"
-        ]
+            "margin_home",
+        ] + ff_game_cols
     ]
 
 
@@ -94,7 +98,10 @@ def build_team_game_net_ratings(games_df: pd.DataFrame) -> pd.DataFrame:
     """Expands games_df (one row per game) into team-game rows with net rating per 100 possessions."""
 
     # Four Factors columns (present after possessions rebuild with --force)
-    ff_raw = ["FGA", "FGM2", "FGM3", "FTA", "ORB", "TOV", "opp_DRB"]
+    ff_raw = [
+        "FGA", "FGM", "FGM2", "FGM3", "FTA", "ORB", "DRB", "TOV",
+        "opp_DRB", "opp_ORB", "opp_FGA", "opp_FGM", "opp_FGM3", "opp_FTA", "opp_TOV",
+    ]
     has_ff = all(f"home_{c}" in games_df.columns for c in ff_raw)
 
     rows = []

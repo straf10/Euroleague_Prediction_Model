@@ -62,14 +62,29 @@ def compute_team_possessions_from_boxscore(player_boxscore_df: pd.DataFrame) -> 
     totals["FGM"] = totals[fgm2] + totals[fgm3]
     totals["possessions_simple"] = totals["FGA"] + 0.44 * totals[fta] - totals[orb] + totals[tov]
 
-    # Need opponent DRB per game to compute the full possessions formula.
-    # We'll self-join within each game: opp_drb = total_drb of the other team.
-    opp_drb = (
-        totals[[season_col, game_col, team_col, drb]]
-        .rename(columns={team_col: "opp_team", drb: "opp_drb"})
+    # Need opponent stats via self-join within each game.
+    opp_stats = (
+        totals[
+            [
+                season_col, game_col, team_col,
+                drb, orb, "FGA", "FGM", fgm3, fta, tov,
+            ]
+        ]
+        .rename(
+            columns={
+                team_col: "opp_team",
+                drb: "opp_drb",
+                orb: "opp_orb",
+                "FGA": "opp_fga",
+                "FGM": "opp_fgm",
+                fgm3: "opp_fgm3",
+                fta: "opp_fta",
+                tov: "opp_tov",
+            }
+        )
     )
     merged = totals.merge(
-        opp_drb,
+        opp_stats,
         on=[season_col, game_col],
         how="left",
         suffixes=("", "")
@@ -96,15 +111,18 @@ def compute_team_possessions_from_boxscore(player_boxscore_df: pd.DataFrame) -> 
     # Four Factors raw stats (standardised names)
     merged["FGM2_std"] = merged[fgm2].astype(float)
     merged["FGM3_std"] = merged[fgm3].astype(float)
+    merged["FGM_std"]  = merged["FGM"].astype(float)
     merged["FTA_std"]  = merged[fta].astype(float)
     merged["ORB_std"]  = merged[orb].astype(float)
+    merged["DRB_std"]  = merged[drb].astype(float)
     merged["TOV_std"]  = merged[tov].astype(float)
 
     out_cols = [
         season_col, game_col, team_col, home_col,
         "possessions", "possessions_simple",
-        "FGA", "FGM2_std", "FGM3_std", "FTA_std",
-        "ORB_std", "TOV_std", "opp_drb",
+        "FGA", "FGM_std", "FGM2_std", "FGM3_std", "FTA_std",
+        "ORB_std", "DRB_std", "TOV_std",
+        "opp_drb", "opp_orb", "opp_fga", "opp_fgm", "opp_fgm3", "opp_fta", "opp_tov",
     ]
     out = merged[out_cols].copy()
     out.rename(columns={
@@ -112,12 +130,20 @@ def compute_team_possessions_from_boxscore(player_boxscore_df: pd.DataFrame) -> 
         game_col: "Gamecode",
         team_col: "Team",
         home_col: "Home",
+        "FGM_std":  "FGM",
         "FGM2_std": "FGM2",
         "FGM3_std": "FGM3",
         "FTA_std":  "FTA",
         "ORB_std":  "ORB",
+        "DRB_std":  "DRB",
         "TOV_std":  "TOV",
         "opp_drb":  "opp_DRB",
+        "opp_orb":  "opp_ORB",
+        "opp_fga":  "opp_FGA",
+        "opp_fgm":  "opp_FGM",
+        "opp_fgm3": "opp_FGM3",
+        "opp_fta":  "opp_FTA",
+        "opp_tov":  "opp_TOV",
     }, inplace=True)
 
     # Sanity

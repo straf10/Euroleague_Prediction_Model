@@ -12,7 +12,7 @@ import joblib
 
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.metrics import (
     accuracy_score,
     brier_score_loss,
@@ -50,7 +50,7 @@ def train_models(
     logreg_max_iter : maximum iterations for LogisticRegression solver.
     ridge_alpha : regularisation strength for Ridge regression.
     seed : random state for reproducibility.
-    cv_folds : number of cross-validation folds.
+    cv_folds : number of `TimeSeriesSplit` folds.
     verbose : if True, print progress to stdout.
 
     Returns
@@ -63,9 +63,14 @@ def train_models(
             print(f"  [train] {msg}")
 
     # ---- Prepare X / y ----
-    X = train_df[FEATURE_COLS].values.astype(float)
-    y_cls = train_df["home_win"].values.astype(int)
-    y_reg = train_df["margin"].values.astype(float)
+    if all(c in train_df.columns for c in ["season", "round", "gamecode"]):
+        ordered_df = train_df.sort_values(["season", "round", "gamecode"]).reset_index(drop=True)
+    else:
+        ordered_df = train_df.copy()
+
+    X = ordered_df[FEATURE_COLS].values.astype(float)
+    y_cls = ordered_df["home_win"].values.astype(int)
+    y_reg = ordered_df["margin"].values.astype(float)
 
     X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -96,8 +101,9 @@ def train_models(
     # ---- Evaluate ----
     _log("Evaluating (cross-validation) …")
 
+    tscv = TimeSeriesSplit(n_splits=cv_folds)
     cv_acc_logreg = float(
-        cross_val_score(logreg, X_scaled, y_cls, cv=cv_folds, scoring="accuracy").mean()
+        cross_val_score(logreg, X_scaled, y_cls, cv=tscv, scoring="accuracy").mean()
     )
 
     logreg_proba = logreg.predict_proba(X_scaled)[:, 1]

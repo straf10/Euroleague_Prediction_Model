@@ -12,7 +12,9 @@ In the EuroLeague, Home Court Advantage is fundamentally a defensive phenomenon.
 
 The figure below is produced when you run `euroleague-sim train` (saved as `plots/training_diagnostics.png`). It shows logistic coefficients for the ten features, feature correlations, out-of-fold probability calibration, and ridge margin fit—supporting the conclusion above.
 
-![Euroleague ML training diagnostics](plots/training_diagnostics.png)
+![Euroleague ML training diagnostics](./plots/training_diagnostics.png)
+
+If the preview is blank, confirm `plots/training_diagnostics.png` exists (run `euroleague-sim train`). The PNG is tracked in git so it also renders on GitHub after you push.
 
 ## The 10 features
 

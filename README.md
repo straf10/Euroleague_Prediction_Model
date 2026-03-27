@@ -14,8 +14,6 @@ The figure below is produced when you run `euroleague-sim train` (saved as `plot
 
 ![Euroleague ML training diagnostics](./plots/training_diagnostics.png)
 
-If the preview is blank, confirm `plots/training_diagnostics.png` exists (run `euroleague-sim train`). The PNG is tracked in git so it also renders on GitHub after you push.
-
 ## The 10 features
 
 These are the columns fed to the ML models (see `src/euroleague_sim/ml/features.py`, `FEATURE_COLS`):

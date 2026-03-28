@@ -22,7 +22,9 @@ These are the columns fed to the ML models (see `src/euroleague_sim/ml/features.
 6. `round_progress` — round / max_rounds
 7. `el_rest_days_diff` — capped EL rest days for home minus away
 
-After training the baseline model, open `models/baseline/diagnostics.png` locally for coefficients, feature correlation, out-of-fold calibration, and margin scatter.
+![Euroleague ML training diagnostics](models/baseline/diagnostics.png)
+
+Coefficients, feature correlation, out-of-fold calibration, and margin scatter for the baseline model (run `euroleague-sim train --model baseline` to regenerate).
 
 ## Training diagnostics
 

@@ -33,6 +33,18 @@ def build_games_with_possessions(
     hs_col = _pick_col(gc, ["homescore", "homeScore", "HomeScore", "homescore"])
     as_col = _pick_col(gc, ["awayscore", "awayScore", "AwayScore", "awayscore"])
 
+    # Parse game date if available (v1 results expose 'date' as e.g. "Sep 30, 2025")
+    _date_candidates = ["date", "Date", "gameDate"]
+    _date_col = None
+    for _dc in _date_candidates:
+        if _dc in gc.columns:
+            _date_col = _dc
+            break
+    if _date_col is not None:
+        gc["game_date"] = pd.to_datetime(gc[_date_col], errors="coerce").dt.normalize()
+    else:
+        gc["game_date"] = pd.NaT
+
     # Ensure types
     gc[game_col] = pd.to_numeric(gc[game_col], errors="coerce").astype(int)
     gc[round_col] = pd.to_numeric(gc[round_col], errors="coerce")
@@ -85,7 +97,7 @@ def build_games_with_possessions(
     ff_game_cols = [f"home_{c}" for c in avail_ff] + [f"away_{c}" for c in avail_ff]
     return out[
         [
-            "Season", "Gamecode", "Phase", "Round",
+            "Season", "Gamecode", "Phase", "Round", "game_date",
             "home_team", "away_team",
             "home_points", "away_points",
             "home_poss", "away_poss", "possessions_game",
@@ -111,11 +123,14 @@ def build_team_game_net_ratings(games_df: pd.DataFrame) -> pd.DataFrame:
         if not np.isfinite(poss) or poss <= 0:
             continue
 
+        _game_date = g.get("game_date", pd.NaT)
+
         base_home = {
             "Season": int(g["Season"]),
             "Gamecode": int(g["Gamecode"]),
             "Round": int(g["Round"]),
             "Phase": str(g["Phase"]),
+            "game_date": _game_date,
             "Team": str(g["home_team"]),
             "Opponent": str(g["away_team"]),
             "IsHome": 1,
@@ -128,6 +143,7 @@ def build_team_game_net_ratings(games_df: pd.DataFrame) -> pd.DataFrame:
             "Gamecode": int(g["Gamecode"]),
             "Round": int(g["Round"]),
             "Phase": str(g["Phase"]),
+            "game_date": _game_date,
             "Team": str(g["away_team"]),
             "Opponent": str(g["home_team"]),
             "IsHome": 0,

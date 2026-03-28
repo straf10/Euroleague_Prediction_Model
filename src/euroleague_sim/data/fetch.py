@@ -12,7 +12,7 @@ from euroleague_api.boxscore_data import BoxScoreData
 
 
 def _normalize_schedule_df(df: pd.DataFrame, round_number: int, season: int) -> pd.DataFrame:
-    """Build standardized schedule DataFrame (Round, Gamecode, home_team, away_team).
+    """Build standardized schedule DataFrame (Round, Gamecode, home_team, away_team, game_date).
 
     Tries multiple possible column names from v2/v3 API responses.
     """
@@ -28,7 +28,24 @@ def _normalize_schedule_df(df: pd.DataFrame, round_number: int, season: int) -> 
     })
     out = out.dropna(subset=["Gamecode", "home_team", "away_team"])
     out["Gamecode"] = out["Gamecode"].astype(int)
+
+    _date_parsed = _extract_schedule_date(df)
+    if _date_parsed is not None and len(_date_parsed) == len(out):
+        out["game_date"] = _date_parsed.values
+    else:
+        out["game_date"] = pd.NaT
+
     return out.sort_values("Gamecode").reset_index(drop=True)
+
+
+def _extract_schedule_date(df: pd.DataFrame) -> pd.Series | None:
+    """Try to parse a calendar date from the schedule DataFrame."""
+    for col in ("date", "Date", "utcDate", "localDate", "gameDate"):
+        if col in df.columns:
+            parsed = pd.to_datetime(df[col], errors="coerce").dt.normalize()
+            if parsed.notna().any():
+                return parsed
+    return None
 
 
 def _find_schedule_columns(df: pd.DataFrame) -> dict | None:

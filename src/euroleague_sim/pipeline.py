@@ -251,6 +251,14 @@ def build_round_schedule_v2(
         })
         out = out.dropna(subset=["Gamecode", "home_team", "away_team"])
         out["Gamecode"] = out["Gamecode"].astype(int)
+
+        from .data.fetch import _extract_schedule_date
+        _date_parsed = _extract_schedule_date(df)
+        if _date_parsed is not None and len(_date_parsed) == len(out):
+            out["game_date"] = _date_parsed.values
+        else:
+            out["game_date"] = pd.NaT
+
         return out.sort_values(["Round", "Gamecode"]).reset_index(drop=True)
 
     # v2 returned different column names → try v3
@@ -396,6 +404,7 @@ def predict_next_round(
             team_game_df=team_game,
             round_number=int(round_number),
             elo_base=cfg.elo.base,
+            season=season,
         )
         has_ml_ready = ml_features[FEATURE_COLS].notna().all(axis=1)
 

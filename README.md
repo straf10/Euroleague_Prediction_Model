@@ -2,7 +2,7 @@
 
 ## What this project does
 
-This repo is a **EuroLeague basketball prediction pipeline**. It pulls game and box-score data via the EuroLeague API, builds team-level features (Elo, four-factors-style matchups, schedule context), and trains **two linear models**: a **logistic regression** for home-win probability and a **ridge regression** for expected point margin. Predictions combine those outputs with a **Monte Carlo** simulation over margin. You run everything through one CLI command, `euroleague-sim`.
+This repo is a **EuroLeague basketball prediction pipeline**. It pulls game and box-score data via the EuroLeague API, builds team-level features (Elo, 5-game weighted recent form on four-factor rates, schedule context), and trains **two linear models**: a **logistic regression** for home-win probability and a **ridge regression** for expected point margin. Predictions combine those outputs with a **Monte Carlo** simulation over margin. You run everything through one CLI command, `euroleague-sim`.
 
 ## Conclusion
 
@@ -10,26 +10,22 @@ In the EuroLeague, Home Court Advantage is fundamentally a defensive phenomenon.
 
 ## Training diagnostics
 
-The figure below is produced when you run `euroleague-sim train` (saved as `plots/training_diagnostics.png`). It shows logistic coefficients for the 10 features, feature correlations, out-of-fold probability calibration, and ridge margin fit—supporting the conclusion above.
+The figure below is produced when you run `euroleague-sim train` (saved as `plots/training_diagnostics.png`). It shows logistic coefficients for the six features, feature correlations, out-of-fold probability calibration, and ridge margin fit—supporting the conclusion above.
 
 ![Euroleague ML training diagnostics](./plots/training_diagnostics.png)
 
 
 
-## The 10 features
+## The 6 features
 
-These are the columns fed to the ML models (see `src/euroleague_sim/ml/features.py`, `FEATURE_COLS`):
+These are the columns fed to the ML models (see `src/euroleague_sim/ml/features.py`, `FEATURE_COLS`). The model is intentionally lean: **identity** (Elo + where you are in the season) plus **recent form** (home-minus-away differentials on four-factor rates, each a 5-game linear WMA with the **newest** game weighted highest).
 
-1. `elo_diff_scaled` -- (Elo_home - Elo_away) / 25
-2. `net_efg` -- season-average matchup differential: eFG%
-3. `net_tov` -- season-average matchup differential: TOV%
-4. `net_orb` -- season-average matchup differential: ORB%
-5. `net_ftr` -- season-average matchup differential: FT rate
-6. `net_efg_wma5` -- 5-game WMA recent form: eFG% (home - away), linear decay weights [5, 4, 3, 2, 1]
-7. `net_tov_wma5` -- 5-game WMA recent form: TOV% (home - away)
-8. `net_orb_wma5` -- 5-game WMA recent form: ORB% (home - away)
-9. `net_ftr_wma5` -- 5-game WMA recent form: FT rate (home - away)
-10. `round_progress` -- round / max_rounds
+1. `elo_diff_scaled` — (Elo_home − Elo_away) / 25
+2. `net_efg_wma5` — 5-game WMA recent form: eFG% (home − away); in training, `shift(1)` excludes the current game from the rolling window
+3. `net_tov_wma5` — 5-game WMA recent form: TOV% (home − away)
+4. `net_orb_wma5` — 5-game WMA recent form: ORB% (home − away)
+5. `net_ftr_wma5` — 5-game WMA recent form: FT rate (home − away)
+6. `round_progress` — round / max_rounds
 
 ## How to run
 

@@ -1,10 +1,6 @@
 {
   "feature_cols": [
     "elo_diff_scaled",
-    "net_efg",
-    "net_tov",
-    "net_orb",
-    "net_ftr",
     "net_efg_wma5",
     "net_tov_wma5",
     "net_orb_wma5",
@@ -13,41 +9,33 @@
   ],
   "metrics": {
     "n_train_samples": 969,
-    "n_features": 10,
+    "n_features": 6,
     "home_win_base_rate": 0.6357069143446853,
     "best_logreg_C": 0.3,
-    "best_ridge_alpha": 125.0,
+    "best_ridge_alpha": 75.0,
     "logreg_cv_accuracy": 0.6397515527950312,
-    "logreg_train_accuracy": 0.6573787409700722,
-    "logreg_brier": 0.21761023857590822,
-    "logreg_logloss": 0.6246853403214678,
-    "ridge_margin_mae": 9.169914845373656,
-    "ridge_margin_rmse": 11.872993125934347
+    "logreg_train_accuracy": 0.651186790505676,
+    "logreg_brier": 0.21794295709033668,
+    "logreg_logloss": 0.6253165685595596,
+    "ridge_margin_mae": 9.190940500398138,
+    "ridge_margin_rmse": 11.897430875604801
   },
   "logreg_coefficients": {
-    "elo_diff_scaled": 0.4520662801736739,
-    "net_efg": 0.0445884806174266,
-    "net_tov": -0.1609445520384462,
-    "net_orb": -0.015452272855386844,
-    "net_ftr": 0.01576998925875983,
-    "net_efg_wma5": 0.04463680405807317,
-    "net_tov_wma5": -0.014480946881309863,
-    "net_orb_wma5": 0.1589590812988886,
-    "net_ftr_wma5": 0.038823672316396086,
-    "round_progress": -0.005116487820200491
+    "elo_diff_scaled": 0.4434059356895491,
+    "net_efg_wma5": 0.08348197746807572,
+    "net_tov_wma5": -0.11275077233042399,
+    "net_orb_wma5": 0.14992222744853492,
+    "net_ftr_wma5": 0.049168108348360065,
+    "round_progress": 9.624697876859463e-05
   },
-  "logreg_intercept": 0.5966216985657032,
+  "logreg_intercept": 0.5947830413463866,
   "ridge_coefficients": {
-    "elo_diff_scaled": 2.2590419447142835,
-    "net_efg": 0.17752198622162604,
-    "net_tov": -0.7993488248613161,
-    "net_orb": 0.1857109723649851,
-    "net_ftr": -0.21324262223026183,
-    "net_efg_wma5": 0.37424459433272156,
-    "net_tov_wma5": -0.7016777367317608,
-    "net_orb_wma5": 0.4965996644575543,
-    "net_ftr_wma5": 0.7515294318983111,
-    "round_progress": 0.04587979610861769
+    "elo_diff_scaled": 2.4130629498058953,
+    "net_efg_wma5": 0.5211947973890343,
+    "net_tov_wma5": -1.1398423824400465,
+    "net_orb_wma5": 0.5751209516873163,
+    "net_ftr_wma5": 0.665740126014338,
+    "round_progress": 0.079271902084859
   },
   "ridge_intercept": 3.5252837977296183
 }

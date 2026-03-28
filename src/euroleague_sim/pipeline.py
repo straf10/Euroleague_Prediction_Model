@@ -22,7 +22,7 @@ from .features.elo import (
 )
 from .sim.model import compute_matchup_features
 from .sim.engine import simulate_next_round
-from .ml.features import build_training_dataset, build_prediction_features
+from .ml.features import FEATURE_COLS, build_training_dataset, build_prediction_features
 from .ml.train import train_models
 from .ml.predict import load_predictor
 
@@ -397,22 +397,21 @@ def predict_next_round(
             round_number=int(round_number),
             elo_base=cfg.elo.base,
         )
-        _form_cols = ["net_efg_wma5", "net_tov_wma5", "net_orb_wma5", "net_ftr_wma5"]
-        has_form = ml_features[_form_cols].notna().all(axis=1)
+        has_ml_ready = ml_features[FEATURE_COLS].notna().all(axis=1)
 
-        if has_form.any():
-            ml_pred = predictor.predict(ml_features.loc[has_form])
-            matchup.loc[has_form.values, "pHomeWin_ml"] = ml_pred["pHomeWin_ml"].values
-            matchup.loc[has_form.values, "margin_ml"]   = ml_pred["margin_ml"].values
+        if has_ml_ready.any():
+            ml_pred = predictor.predict(ml_features.loc[has_ml_ready])
+            matchup.loc[has_ml_ready.values, "pHomeWin_ml"] = ml_pred["pHomeWin_ml"].values
+            matchup.loc[has_ml_ready.values, "margin_ml"]   = ml_pred["margin_ml"].values
 
-        if has_form.all():
+        if has_ml_ready.all():
             ml_margin = matchup["margin_ml"].values
-        elif has_form.any():
+        elif has_ml_ready.any():
             a_vals = matchup["A"].to_numpy(dtype=float)
             b_vals = matchup["B"].to_numpy(dtype=float)
             fallback = cfg.mc.alpha1 * a_vals + cfg.mc.alpha2 * b_vals + cfg.mc.alpha3
             ml_margin = np.where(
-                has_form.values,
+                has_ml_ready.values,
                 matchup["margin_ml"].values,
                 fallback,
             )

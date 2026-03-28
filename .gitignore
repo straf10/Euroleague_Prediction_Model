@@ -16,6 +16,7 @@ env/
 data_cache/
 models/**/*.joblib
 models/*/diagnostics.png
+!models/baseline/diagnostics.png
 
 # IDE
 .idea/

@@ -404,7 +404,6 @@ def predict_next_round(
             team_game_df=team_game,
             round_number=int(round_number),
             elo_base=cfg.elo.base,
-            season=season,
         )
         has_ml_ready = ml_features[FEATURE_COLS].notna().all(axis=1)
 

@@ -14,11 +14,13 @@ env/
 
 # Data cache & model artefacts
 data_cache/
-models/*.joblib
+models/**/*.joblib
+models/*/diagnostics.png
 
 # IDE
 .idea/
 .vscode/
+.cursorrules
 *.swp
 *.swo
 *~

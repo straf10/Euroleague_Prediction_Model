@@ -3,59 +3,78 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Sequence
+from typing import List, Sequence, Any
 
 import matplotlib
-
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.base import clone
 from sklearn.calibration import calibration_curve
-from sklearn.linear_model import LogisticRegression, Ridge
-from sklearn.model_selection import TimeSeriesSplit
 
 from .features import FEATURE_COLS
+from .evaluate import EvalResult
 
 
 def save_training_diagnostics(
     ordered_df: pd.DataFrame,
-    X_scaled: np.ndarray,
+    X_fit: np.ndarray,
     y_cls: np.ndarray,
     y_reg: np.ndarray,
-    logreg: LogisticRegression,
-    ridge: Ridge,
+    win_est: Any,
+    margin_est: Any,
+    eval_res: EvalResult,
     output_path: Path,
     *,
     feature_cols: Sequence[str] | None = None,
-    cv_folds: int = 5,
 ) -> None:
-    """Write a 2×2 figure: coef tornado, feature correlation, calibration, margin scatter.
-
-    Calibration uses time-series cross-validated predicted probabilities so the
-    reliability curve reflects out-of-fold behaviour (not training-set overfit).
-    """
+    """Write a 2×2 figure: importance tornado/bar, feature correlation, calibration, margin scatter."""
     names: List[str] = list(feature_cols) if feature_cols is not None else list(FEATURE_COLS)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 12), constrained_layout=True)
 
-    # --- 1) Logistic coefficients (horizontal tornado) ---
+    # --- 1) Feature importance (tornado or bar) ---
     ax1 = axes[0, 0]
-    coefs = logreg.coef_[0]
-    order = np.argsort(np.abs(coefs))
-    names_s = [names[i] for i in order]
-    vals_s = coefs[order]
-    colors = np.where(vals_s >= 0, "#2E7D32", "#C62828")
-    ax1.barh(names_s, vals_s, color=colors, edgecolor="white", linewidth=0.4)
-    ax1.axvline(0.0, color="black", linewidth=0.8)
-    ax1.set_xlabel("Coefficient (standardized features)")
-    ax1.set_title(
-        "Logistic regression coefficients\n"
-        "(+ → higher P(home win); − → higher P(away win))"
-    )
+    
+    # Unwrap calibrated classifier
+    base_win = win_est
+    if hasattr(win_est, "calibrated_classifiers_") and len(win_est.calibrated_classifiers_) > 0:
+        # Use the first fitted fold's estimator to extract coefficients
+        base_win = win_est.calibrated_classifiers_[0].estimator
+    elif hasattr(win_est, "estimator"):
+        base_win = win_est.estimator
+    elif hasattr(win_est, "base_estimator"):
+        base_win = win_est.base_estimator
+
+    if hasattr(base_win, "coef_"):
+        coefs = base_win.coef_
+        if coefs.ndim > 1:
+            coefs = coefs[0]
+        order = np.argsort(np.abs(coefs))
+        names_s = [names[i] for i in order]
+        vals_s = coefs[order]
+        colors = np.where(vals_s >= 0, "#2E7D32", "#C62828")
+        ax1.barh(names_s, vals_s, color=colors, edgecolor="white", linewidth=0.4)
+        ax1.axvline(0.0, color="black", linewidth=0.8)
+        ax1.set_xlabel("Coefficient")
+        ax1.set_title(
+            "Linear coefficients\n"
+            "(+ → higher P(home win); − → higher P(away win))"
+        )
+    elif hasattr(base_win, "feature_importances_"):
+        importances = base_win.feature_importances_
+        order = np.argsort(importances)
+        names_s = [names[i] for i in order]
+        vals_s = importances[order]
+        ax1.barh(names_s, vals_s, color="#1565C0", edgecolor="white", linewidth=0.4)
+        ax1.set_xlabel("Feature Importance")
+        ax1.set_title("Tree Feature Importances\n(magnitude only, no direction)")
+    else:
+        ax1.text(0.5, 0.5, "No coef_ or feature_importances_ found", 
+                 ha="center", va="center", transform=ax1.transAxes)
+        ax1.set_title("Feature Importance")
 
     # --- 2) Feature correlation heatmap ---
     ax2 = axes[0, 1]
@@ -71,24 +90,16 @@ def save_training_diagnostics(
 
     # --- 3) Calibration (reliability) curve, CV probabilities ---
     ax3 = axes[1, 0]
-    n_splits = min(cv_folds, max(2, len(y_cls) // 10))
-    tscv = TimeSeriesSplit(n_splits=n_splits)
-    # TimeSeriesSplit is not a full partition of indices, so we cannot use
-    # cross_val_predict; accumulate out-of-fold probabilities on test folds only.
-    proba_oof = np.full(len(y_cls), np.nan, dtype=float)
-    for train_idx, test_idx in tscv.split(X_scaled):
-        lr_fold = clone(logreg)
-        lr_fold.fit(X_scaled[train_idx], y_cls[train_idx])
-        proba_oof[test_idx] = lr_fold.predict_proba(X_scaled[test_idx])[:, 1]
-    mask = np.isfinite(proba_oof)
-    prob_true, prob_pred = calibration_curve(
-        y_cls[mask],
-        proba_oof[mask],
-        n_bins=10,
-        strategy="uniform",
-    )
-    ax3.plot([0, 1], [0, 1], "k--", linewidth=1.0, label="Perfect calibration")
-    ax3.plot(prob_pred, prob_true, "o-", color="#1565C0", linewidth=1.5, markersize=6, label="Model (time-series CV)")
+    mask = np.isfinite(eval_res.oof_proba)
+    if mask.any():
+        prob_true, prob_pred = calibration_curve(
+            eval_res.y_win[mask],
+            eval_res.oof_proba[mask],
+            n_bins=10,
+            strategy="uniform",
+        )
+        ax3.plot([0, 1], [0, 1], "k--", linewidth=1.0, label="Perfect calibration")
+        ax3.plot(prob_pred, prob_true, "o-", color="#1565C0", linewidth=1.5, markersize=6, label="Model (time-series CV)")
     ax3.set_xlabel("Mean predicted P(home win)")
     ax3.set_ylabel("Fraction of home wins")
     ax3.set_title("Probability calibration\n(out-of-sample via time-series CV)")
@@ -98,9 +109,9 @@ def save_training_diagnostics(
     ax3.set_aspect("equal", adjustable="box")
     ax3.grid(True, alpha=0.3)
 
-    # --- 4) Actual vs predicted margin (Ridge) ---
+    # --- 4) Actual vs predicted margin ---
     ax4 = axes[1, 1]
-    pred_m = ridge.predict(X_scaled)
+    pred_m = margin_est.predict(X_fit)
     resid = y_reg - pred_m
     sc = ax4.scatter(
         pred_m,
@@ -121,7 +132,7 @@ def save_training_diagnostics(
     ax4.set_aspect("equal", adjustable="box")
     ax4.set_xlabel("Predicted margin (home − away)")
     ax4.set_ylabel("Actual margin (home − away)")
-    ax4.set_title("Ridge: actual vs predicted margin\n(color = residual, in-sample)")
+    ax4.set_title("Margin: actual vs predicted\n(color = residual, in-sample)")
     ax4.legend(loc="upper left", fontsize=9)
     ax4.grid(True, alpha=0.3)
     cbar = fig.colorbar(sc, ax=ax4, fraction=0.046, pad=0.04)

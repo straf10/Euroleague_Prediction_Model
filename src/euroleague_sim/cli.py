@@ -37,13 +37,15 @@ def _parse_args(argv):
     upd.add_argument("--force", action="store_true", help="Force re-download raw data and rebuild features")
 
     # train
-    trn = sub.add_parser("train", help="Train ML models (Logistic Regression + Ridge)")
+    trn = sub.add_parser("train", help="Train ML models")
     trn.add_argument("--season", type=int, default=2025, help="Current season start year (default: 2025)")
+    trn.add_argument("--model", type=str, default="baseline", help="Model name from registry, or 'all' for leaderboard (default: baseline)")
 
     # predict
     pred = sub.add_parser("predict", help="Predict a round (default: next unplayed round)")
     pred.add_argument("--season", type=int, default=2025, help="Season start year (default: 2025)")
     pred.add_argument("--round", default="next", help="Round number (int) or 'next'")
+    pred.add_argument("--model", type=str, default="baseline", help="Model name from registry (default: baseline)")
     pred.add_argument("--n-sims", type=int, default=None, help="Number of MC simulations (default from config: 20000)")
     pred.add_argument("--seed", type=int, default=42, help="Random seed")
     pred.add_argument("--out", default=None, help="Output CSV path (default: outputs/round_R_predictions.csv)")
@@ -124,10 +126,12 @@ def main(argv=None):
 
     if args.cmd == "train":
         season = int(args.season)
-        print(f"[train] Training ML models (LogReg + Ridge) for season {season} "
+        model_name = args.model
+        print(f"[train] Training ML models ({model_name}) for season {season} "
               f"(+ {cfg.season.history_seasons} history seasons) …")
-        metrics = train_ml_pipeline(cache, cfg, current_season=season, verbose=True)
-        print(f"[train] Done. Models at: {Path(cfg.ml.model_dir).resolve()}")
+        metrics = train_ml_pipeline(cache, cfg, current_season=season, model_name=model_name, verbose=True)
+        if model_name != "all":
+            print(f"[train] Done. Models at: {Path(cfg.ml.model_dir).resolve()}/{model_name}")
         return 0
 
     if args.cmd == "predict":
@@ -147,6 +151,7 @@ def main(argv=None):
             cfg=cfg,
             season=season,
             round_number=round_number,
+            model_name=args.model,
             n_sims=args.n_sims,
             seed=int(args.seed),
         )

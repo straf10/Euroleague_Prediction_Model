@@ -1,0 +1,42 @@
+{
+  "model_name": "baseline",
+  "display_name": "Baseline (LogReg + Ridge)",
+  "requires_scaling": true,
+  "feature_cols": [
+    "elo_diff_scaled",
+    "net_efg_wma5",
+    "net_tov_wma5",
+    "net_orb_wma5",
+    "net_ftr_wma5",
+    "round_progress",
+    "el_rest_days_diff"
+  ],
+  "metrics": {
+    "n_train_samples": 969,
+    "n_features": 7,
+    "home_win_base_rate": 0.6357069143446853,
+    "cv_accuracy": 0.6447204968944099,
+    "brier_score": 0.22180990953177024,
+    "log_loss": 0.6337920761734392,
+    "margin_mae": 9.337379864060477,
+    "margin_rmse": 12.064566573856654
+  },
+  "win_coefficients": {
+    "elo_diff_scaled": 0.38302165598028093,
+    "net_efg_wma5": 0.0766144439882403,
+    "net_tov_wma5": -0.10053282391607507,
+    "net_orb_wma5": 0.1380907099657758,
+    "net_ftr_wma5": 0.06566681383120475,
+    "round_progress": 0.0176109751033393,
+    "el_rest_days_diff": 0.005645109987390526
+  },
+  "margin_coefficients": {
+    "elo_diff_scaled": 2.404684278683893,
+    "net_efg_wma5": 0.5221690837172779,
+    "net_tov_wma5": -1.143411460770201,
+    "net_orb_wma5": 0.5764326052936551,
+    "net_ftr_wma5": 0.6643178686000256,
+    "round_progress": 0.07858986343355484,
+    "el_rest_days_diff": -0.13194062345463423
+  }
+}

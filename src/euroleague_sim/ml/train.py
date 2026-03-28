@@ -1,63 +1,43 @@
-"""Train Logistic Regression + Ridge models for Euroleague predictions."""
+"""Train ML models for Euroleague predictions."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Any
 
 import numpy as np
 import pandas as pd
 import joblib
 
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
-from sklearn.metrics import (
-    accuracy_score,
-    brier_score_loss,
-    log_loss,
-    mean_absolute_error,
-    mean_squared_error,
-)
+from sklearn.model_selection import TimeSeriesSplit
 
 from .features import FEATURE_COLS
+from .registry import MODEL_REGISTRY, get_model
+from .evaluate import evaluate_model
 
 
 def train_models(
     train_df: pd.DataFrame,
     model_dir: Path,
     *,
-    logreg_C: float = 1.0,
-    logreg_max_iter: int = 1000,
-    ridge_alpha: float = 1.0,
+    model_name: str = "baseline",
     seed: int = 42,
     cv_folds: int = 5,
     verbose: bool = True,
-    diagnostic_plot_path: Path | None = None,
 ) -> Dict[str, float]:
-    """Train tuned linear ML models, evaluate, and persist.
-
-    Models trained:
-    - LogisticRegression  (binary home_win classifier)
-    - Ridge               (margin regressor)
+    """Train linear ML models, evaluate, and persist.
 
     Parameters
     ----------
     train_df : DataFrame produced by ``build_training_dataset`` (must contain
         ``FEATURE_COLS`` + ``home_win`` + ``margin``).
     model_dir : directory where trained artefacts will be saved.
-    logreg_C : unused; ``C`` is tuned over
-        ``[0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 10.0, 100.0]``.
-    logreg_max_iter : maximum iterations for LogisticRegression solver.
-    ridge_alpha : unused; ``alpha`` is tuned over
-        ``[10.0, 50.0, 75.0, 100.0, 125.0, 150.0, 200.0, 250.0, 500.0, 1000.0]``.
+    model_name : name of the model to train from the registry, or "all" for leaderboard.
     seed : random state for reproducibility.
     cv_folds : number of `TimeSeriesSplit` folds.
     verbose : if True, print progress to stdout.
-    diagnostic_plot_path : if set, write a 2×2 diagnostics PNG (coefficients,
-        correlation heatmap, calibration curve, margin scatter).
 
     Returns
     -------
@@ -80,145 +60,138 @@ def train_models(
 
     X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
     _log(f"Training samples: {len(y_cls)}  |  Features: {X.shape[1]}")
     _log(f"Home-win base rate: {y_cls.mean():.3f}")
 
-    # ---- Hyperparameter search (time-series aware) ----
-    if len(y_cls) <= 5:
-        raise ValueError("Need more than 5 training rows for TimeSeriesSplit(n_splits=5).")
+    if len(y_cls) <= cv_folds:
+        raise ValueError(f"Need more than {cv_folds} training rows for TimeSeriesSplit(n_splits={cv_folds}).")
 
-    tscv = TimeSeriesSplit(n_splits=5)
+    tscv = TimeSeriesSplit(n_splits=cv_folds)
 
-    _log("Tuning Logistic Regression classifier with GridSearchCV …")
-    logreg_grid = GridSearchCV(
-        estimator=LogisticRegression(
-            max_iter=logreg_max_iter,
-            solver="lbfgs",
-            random_state=seed,
-        ),
-        param_grid={"C": [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 10.0, 25.0, 50.0, 100.0]},
-        cv=tscv,
-        scoring="accuracy",
-        refit=True,
-    )
-    logreg_grid.fit(X_scaled, y_cls)
-    best_logreg = logreg_grid.best_estimator_
+    if model_name == "all":
+        _log("Running leaderboard evaluation for all models...")
+        print(f"\n  {'='*80}")
+        print(f"  {'Model':<25s} | {'Log-Loss':<9s} | {'Brier':<7s} | {'Acc':<6s} | {'MAE':<6s} | {'RMSE':<6s}")
+        print(f"  {'-'*80}")
+        
+        for name, factory in MODEL_REGISTRY.items():
+            model_dict = factory()
+            eval_res = evaluate_model(model_dict, X, y_cls, y_reg, tscv)
+            m = eval_res.metrics
+            print(f"  {model_dict['name']:<25s} | {m['log_loss']:<9.4f} | {m['brier_score']:<7.4f} | "
+                  f"{m['cv_accuracy']:<6.3f} | {m['margin_mae']:<6.2f} | {m['margin_rmse']:<6.2f}")
+        print(f"  {'='*80}\n")
+        return {}
 
-    _log("Tuning Ridge regressor with GridSearchCV …")
-    ridge_grid = GridSearchCV(
-        estimator=Ridge(random_state=seed),
-        param_grid={
-            "alpha": [
-                10.0,
-                25.0,
-                50.0,
-                75.0,
-                100.0,
-                125.0,
-                150.0,
-                200.0,
-                250.0,
-                500.0,
-                1000.0,
-            ],
-        },
-        cv=tscv,
-        scoring="neg_root_mean_squared_error",
-        refit=True,
-    )
-    ridge_grid.fit(X_scaled, y_reg)
-    best_ridge = ridge_grid.best_estimator_
-
-    _log("Calibrating best Logistic Regression probabilities …")
-    calibrated_logreg = CalibratedClassifierCV(
-        best_logreg,
-        method="sigmoid",
-        cv=tscv,
-    )
-    calibrated_logreg.fit(X_scaled, y_cls)
-
-    # ---- Evaluate ----
-    _log("Evaluating (cross-validation) …")
-
-    cv_acc_logreg = float(logreg_grid.best_score_)
-
-    logreg_proba = calibrated_logreg.predict_proba(X_scaled)[:, 1]
-    ridge_margin = best_ridge.predict(X_scaled)
-
-    metrics: Dict[str, float] = {
-        "n_train_samples":          int(len(y_cls)),
-        "n_features":               int(X.shape[1]),
-        "home_win_base_rate":       float(y_cls.mean()),
-        "best_logreg_C":            float(logreg_grid.best_params_["C"]),
-        "best_ridge_alpha":         float(ridge_grid.best_params_["alpha"]),
-        "logreg_cv_accuracy":       cv_acc_logreg,
-        "logreg_train_accuracy":    float(accuracy_score(y_cls, (logreg_proba > 0.5).astype(int))),
-        "logreg_brier":             float(brier_score_loss(y_cls, logreg_proba)),
-        "logreg_logloss":           float(log_loss(y_cls, logreg_proba)),
-        "ridge_margin_mae":         float(mean_absolute_error(y_reg, ridge_margin)),
-        "ridge_margin_rmse":        float(np.sqrt(mean_squared_error(y_reg, ridge_margin))),
-    }
-
-    # ---- Feature coefficients ----
-    logreg_coefs = dict(zip(FEATURE_COLS, best_logreg.coef_[0].tolist()))
-    ridge_coefs = dict(zip(FEATURE_COLS, best_ridge.coef_.tolist()))
-
+    # Single model training
+    model_dict = get_model(model_name)
+    _log(f"Evaluating {model_dict['name']} (cross-validation) …")
+    
+    eval_res = evaluate_model(model_dict, X, y_cls, y_reg, tscv)
+    metrics = eval_res.metrics
+    
     # ---- Print summary ----
     if verbose:
         print(f"\n  {'='*70}")
-        print(f"  TRAINING RESULTS  ({metrics['n_train_samples']} games, "
+        print(f"  TRAINING RESULTS: {model_dict['name']}  ({metrics['n_train_samples']} games, "
               f"{metrics['n_features']} features)")
         print(f"  {'='*70}")
-        print(f"  Best LogisticRegression C: {metrics['best_logreg_C']:.4g}")
-        print(f"  Best Ridge alpha:         {metrics['best_ridge_alpha']:.4g}")
-        print(f"  Cross-val accuracy   LogReg: {cv_acc_logreg:.3f}")
-        print(f"  Train accuracy       LogReg: {metrics['logreg_train_accuracy']:.3f}")
-        print(f"  Brier score          LogReg: {metrics['logreg_brier']:.4f}")
-        print(f"  Log-loss             LogReg: {metrics['logreg_logloss']:.4f}")
-        print(f"  Margin MAE           Ridge:  {metrics['ridge_margin_mae']:.2f}")
-        print(f"  Margin RMSE          Ridge:  {metrics['ridge_margin_rmse']:.2f}")
-        print(f"\n  Logistic Regression coefficients (|weight| descending):")
-        for feat, w in sorted(logreg_coefs.items(), key=lambda x: -abs(x[1]))[:7]:
+        print(f"  Cross-val accuracy   Win:    {metrics['cv_accuracy']:.3f}")
+        print(f"  Brier score          Win:    {metrics['brier_score']:.4f}")
+        print(f"  Log-loss             Win:    {metrics['log_loss']:.4f}")
+        print(f"  Margin MAE           Margin: {metrics['margin_mae']:.2f}")
+        print(f"  Margin RMSE          Margin: {metrics['margin_rmse']:.2f}")
+        print(f"  {'='*70}\n")
+
+    # ---- Final Fit ----
+    _log(f"Fitting final {model_dict['name']} on full dataset …")
+    
+    requires_scaling = model_dict.get("requires_scaling", False)
+    scaler = None
+    X_fit = X
+    if requires_scaling:
+        scaler = StandardScaler()
+        X_fit = scaler.fit_transform(X)
+        
+    win_est = model_dict["win"]
+    margin_est = model_dict["margin"]
+    
+    win_est.fit(X_fit, y_cls)
+    margin_est.fit(X_fit, y_reg)
+
+    # ---- Persist ----
+    out_dir = model_dir / model_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    if requires_scaling and scaler is not None:
+        joblib.dump(scaler, out_dir / "scaler.joblib")
+        
+    joblib.dump(win_est, out_dir / "win_model.joblib")
+    joblib.dump(margin_est, out_dir / "margin_model.joblib")
+
+    meta = {
+        "model_name": model_name,
+        "display_name": model_dict["name"],
+        "requires_scaling": requires_scaling,
+        "feature_cols": FEATURE_COLS,
+        "metrics": metrics,
+    }
+    
+    # Extract feature weights
+    def _get_weights(est: Any) -> tuple[Dict[str, float], str]:
+        if hasattr(est, "coef_"):
+            coefs = est.coef_
+            if coefs.ndim > 1:
+                coefs = coefs[0]
+            return dict(zip(FEATURE_COLS, coefs.tolist())), "coefficients"
+        elif hasattr(est, "feature_importances_"):
+            importances = est.feature_importances_
+            return dict(zip(FEATURE_COLS, importances.tolist())), "importances"
+        return {}, ""
+
+    # Unwrap calibrated classifier if needed
+    base_win = win_est
+    if hasattr(win_est, "calibrated_classifiers_") and len(win_est.calibrated_classifiers_) > 0:
+        base_win = win_est.calibrated_classifiers_[0].estimator
+    elif hasattr(win_est, "estimator"):
+        base_win = win_est.estimator
+    elif hasattr(win_est, "base_estimator"):
+        base_win = win_est.base_estimator
+        
+    win_weights, win_weight_type = _get_weights(base_win)
+    if win_weights:
+        meta[f"win_{win_weight_type}"] = win_weights
+        
+    margin_weights, margin_weight_type = _get_weights(margin_est)
+    if margin_weights:
+        meta[f"margin_{margin_weight_type}"] = margin_weights
+
+    if verbose and win_weights:
+        print(f"\n  Win model {win_weight_type} (|weight| descending):")
+        for feat, w in sorted(win_weights.items(), key=lambda x: -abs(x[1]))[:7]:
             print(f"    {feat:<22s}  {w:+.4f}")
         print(f"  {'='*70}\n")
 
-    # ---- Persist ----
-    model_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(scaler, model_dir / "scaler.joblib")
-    joblib.dump(calibrated_logreg, model_dir / "logreg.joblib")
-    joblib.dump(best_ridge,  model_dir / "ridge.joblib")
-
-    meta = {
-        "feature_cols": FEATURE_COLS,
-        "metrics": metrics,
-        "logreg_coefficients": logreg_coefs,
-        "logreg_intercept": float(best_logreg.intercept_[0]),
-        "ridge_coefficients": ridge_coefs,
-        "ridge_intercept": float(best_ridge.intercept_),
-    }
-    (model_dir / "metadata.json").write_text(
+    (out_dir / "metadata.json").write_text(
         json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8",
     )
 
-    _log(f"Models saved to {model_dir.resolve()}")
+    _log(f"Models saved to {out_dir.resolve()}")
 
-    if diagnostic_plot_path is not None:
-        from .plots import save_training_diagnostics
-
-        save_training_diagnostics(
-            ordered_df,
-            X_scaled,
-            y_cls,
-            y_reg,
-            best_logreg,
-            best_ridge,
-            diagnostic_plot_path,
-            feature_cols=FEATURE_COLS,
-            cv_folds=cv_folds,
-        )
-        _log(f"Training diagnostics plot saved to {diagnostic_plot_path.resolve()}")
+    # Diagnostic plot
+    diagnostic_plot_path = out_dir / "diagnostics.png"
+    from .plots import save_training_diagnostics
+    save_training_diagnostics(
+        ordered_df,
+        X_fit,
+        y_cls,
+        y_reg,
+        win_est,
+        margin_est,
+        eval_res,
+        diagnostic_plot_path,
+        feature_cols=FEATURE_COLS,
+    )
+    _log(f"Training diagnostics plot saved to {diagnostic_plot_path.resolve()}")
 
     return metrics

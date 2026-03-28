@@ -281,6 +281,7 @@ def train_ml_pipeline(
     cache: Cache,
     cfg: ProjectConfig,
     current_season: int,
+    model_name: str = "baseline",
     verbose: bool = True,
 ) -> Dict[str, float]:
     """Build training data from multiple seasons, train linear models, save artefacts.
@@ -332,12 +333,10 @@ def train_ml_pipeline(
     metrics = train_models(
         train_df,
         model_dir=model_dir,
-        logreg_C=cfg.ml.logreg_C,
-        logreg_max_iter=cfg.ml.logreg_max_iter,
-        ridge_alpha=cfg.ml.ridge_alpha,
+        model_name=model_name,
+        seed=42,
         cv_folds=cfg.ml.cv_folds,
         verbose=verbose,
-        diagnostic_plot_path=Path("plots") / "training_diagnostics.png",
     )
     return metrics
 
@@ -352,6 +351,7 @@ def predict_next_round(
     cfg: ProjectConfig,
     season: int,
     round_number: Optional[int] = None,
+    model_name: str = "baseline",
     n_sims: Optional[int] = None,
     seed: int = 42,
 ) -> pd.DataFrame:
@@ -393,7 +393,7 @@ def predict_next_round(
 
     # 5) ML ensemble prediction
     model_dir = Path(cfg.ml.model_dir)
-    predictor = load_predictor(model_dir)
+    predictor = load_predictor(model_dir, model_name=model_name)
     ml_margin = None
 
     if predictor is not None:

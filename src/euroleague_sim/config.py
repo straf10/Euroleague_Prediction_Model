@@ -37,10 +37,7 @@ class ShrinkageConfig:
 
 @dataclass(frozen=True)
 class MLConfig:
-    """Configuration for ML model training (Logistic Regression + Ridge)."""
-    logreg_C: float = 1.0            # inverse regularisation strength
-    logreg_max_iter: int = 1000
-    ridge_alpha: float = 1.0         # L2 regularisation strength
+    """Configuration for ML model training."""
     model_dir: str = "models"        # directory for persisted model artefacts
     cv_folds: int = 5
 

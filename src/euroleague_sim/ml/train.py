@@ -99,7 +99,7 @@ def train_models(
             solver="lbfgs",
             random_state=seed,
         ),
-        param_grid={"C": [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 10.0, 100.0]},
+        param_grid={"C": [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 10.0, 25.0, 50.0, 100.0]},
         cv=tscv,
         scoring="accuracy",
         refit=True,
@@ -113,6 +113,7 @@ def train_models(
         param_grid={
             "alpha": [
                 10.0,
+                25.0,
                 50.0,
                 75.0,
                 100.0,

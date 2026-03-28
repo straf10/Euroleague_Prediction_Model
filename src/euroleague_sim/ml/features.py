@@ -15,12 +15,15 @@ import numpy as np
 # ---- Ordered list of feature columns consumed by the ML models ----
 FEATURE_COLS: List[str] = [
     "elo_diff_scaled",    # (elo_home − elo_away) / 25
-    "net_efg",            # (home off eFG% − away def eFG%) − (away off eFG% − home def eFG%)
-    "net_tov",            # (home off TOV% − away def TOV%) − (away off TOV% − home def TOV%)
-    "net_orb",            # (home off ORB% − away def DRB%) − (away off ORB% − home def DRB%)
-    "net_ftr",            # (home off FT rate − away def FT rate) − (away off FT rate − home def FT rate)
+    "net_efg",            # season-average matchup: eFG%
+    "net_tov",            # season-average matchup: TOV%
+    "net_orb",            # season-average matchup: ORB%
+    "net_ftr",            # season-average matchup: FT rate
+    "net_efg_wma5",       # 5-game WMA recent form: eFG%
+    "net_tov_wma5",       # 5-game WMA recent form: TOV%
+    "net_orb_wma5",       # 5-game WMA recent form: ORB%
+    "net_ftr_wma5",       # 5-game WMA recent form: FT rate
     "round_progress",     # round / max_rounds
-    "net_form_wma5",      # 5-game weighted moving average of NetPer100 (home − away)
 ]
 
 
@@ -42,12 +45,19 @@ def _safe(val, default: float = 0.0) -> float:
 def _wma5_rolling(arr: np.ndarray) -> float:
     """Linearly-weighted average over *arr*, most recent weighted highest.
 
-    With *n* values the weights are ``[1, 2, ..., n]`` so the newest value
-    (last element) gets weight *n*.  Denominator is ``n*(n+1)/2``.
+    NaN values (e.g. from ``shift(1)`` at position 0) are dropped before
+    weighting so that partial windows produce usable values.
+
+    The newest element always receives weight 5.  For *n* < 5 the lightest
+    weights are dropped: e.g. n=3 → weights ``[3, 4, 5]``, sum = 12.
+    A full window (n=5) uses ``[1, 2, 3, 4, 5]``, sum = 15.
     """
-    n = len(arr)
-    w = np.arange(1, n + 1, dtype=float)
-    return np.dot(arr, w) / w.sum()
+    clean = arr[np.isfinite(arr)]
+    n = len(clean)
+    if n == 0:
+        return np.nan
+    w = np.arange(5 - n + 1, 6, dtype=float)
+    return np.dot(clean, w) / w.sum()
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +178,38 @@ def compute_cumulative_features(team_game_df: pd.DataFrame) -> pd.DataFrame:
             np.nan,
         )
 
+        # Per-game Four Factor rates → shifted 5-game WMAs
+        df["game_efg"] = np.where(
+            df["FGA"] > 0,
+            (df["FGM"] + 0.5 * df["FGM3"]) / df["FGA"],
+            np.nan,
+        )
+        _game_tov_denom = df["FGA"] + 0.44 * df["FTA"] + df["TOV"]
+        df["game_tov"] = np.where(
+            _game_tov_denom > 0,
+            df["TOV"] / _game_tov_denom,
+            np.nan,
+        )
+        _game_orb_denom = df["ORB"] + df["opp_DRB"]
+        df["game_orb"] = np.where(
+            _game_orb_denom > 0,
+            df["ORB"] / _game_orb_denom,
+            np.nan,
+        )
+        df["game_ftr"] = np.where(
+            df["FGA"] > 0,
+            df["FTA"] / df["FGA"],
+            np.nan,
+        )
+
+        for _rate_col in ["game_efg", "game_tov", "game_orb", "game_ftr"]:
+            _wma_col = _rate_col.replace("game_", "") + "_wma5"
+            df[_wma_col] = g[_rate_col].transform(
+                lambda x: x.shift(1).rolling(5, min_periods=1).apply(
+                    _wma5_rolling, raw=True,
+                )
+            )
+
     # ---------- home / away split ----------
     for is_home_val, prefix in [(1, "hs_"), (0, "as_")]:
         mask = df["IsHome"] == is_home_val
@@ -279,13 +321,24 @@ def build_training_dataset(
             away_orb_matchup = away_off_orb - home_def_drb
             away_ftr_matchup = away_off_ftr - home_def_ftr
 
-            h_form = h_row.get("form_wma5")
-            a_form = a_row.get("form_wma5")
-            if (h_form is not None and a_form is not None
-                    and np.isfinite(float(h_form)) and np.isfinite(float(a_form))):
-                net_form_wma5 = float(h_form) - float(a_form)
-            else:
-                net_form_wma5 = np.nan
+            _wma_features: dict = {}
+            _wma_valid = True
+            for _factor in ["efg", "tov", "orb", "ftr"]:
+                _wma_col = f"{_factor}_wma5"
+                _h_val = h_row.get(_wma_col)
+                _a_val = a_row.get(_wma_col)
+                if (_h_val is not None and _a_val is not None
+                        and np.isfinite(float(_h_val))
+                        and np.isfinite(float(_a_val))):
+                    _wma_features[f"net_{_factor}_wma5"] = float(_h_val) - float(_a_val)
+                else:
+                    _wma_valid = False
+                    break
+            if not _wma_valid:
+                _wma_features = {
+                    f"net_{f}_wma5": np.nan
+                    for f in ["efg", "tov", "orb", "ftr"]
+                }
 
             feat: dict = {
                 "elo_diff_scaled": (elo_h - elo_a) / 25.0,
@@ -293,8 +346,8 @@ def build_training_dataset(
                 "net_tov": home_tov_matchup - away_tov_matchup,
                 "net_orb": home_orb_matchup - away_orb_matchup,
                 "net_ftr": home_ftr_matchup - away_ftr_matchup,
+                **_wma_features,
                 "round_progress":  rnd / max_rounds,
-                "net_form_wma5": net_form_wma5,
                 # Targets
                 "home_win": int(float(game["home_points"]) > float(game["away_points"])),
                 "margin":   float(game["margin_home"]),
@@ -306,7 +359,8 @@ def build_training_dataset(
             all_rows.append(feat)
 
     result = pd.DataFrame(all_rows)
-    result = result.dropna(subset=["net_form_wma5"])
+    _wma_subset = ["net_efg_wma5", "net_tov_wma5", "net_orb_wma5", "net_ftr_wma5"]
+    result = result.dropna(subset=_wma_subset)
     return result
 
 
@@ -345,11 +399,6 @@ def build_prediction_features(
         for team, grp in team_game_df.groupby("Team"):
             grp_sorted = grp.sort_values(["Round", "Gamecode"])
             stats: Dict[str, float] = {}
-
-            if "NetPer100" in grp_sorted.columns:
-                tail = grp_sorted["NetPer100"].dropna().tail(5).values
-                if len(tail) > 0:
-                    stats["form_wma5"] = _wma5_rolling(tail)
 
             # Four Factors from full-season cumulative raw totals
             if _ff_avail:
@@ -390,6 +439,36 @@ def build_prediction_features(
                     if (t_drb + t_opp_orb) > 0 else 0.75
                 )
                 stats["def_ft_rate"] = t_opp_fta / t_opp_fga if t_opp_fga > 0 else 0.30
+
+                # Per-game Four Factor WMAs for recent form
+                _g_fga = grp_sorted["FGA"].values.astype(float)
+                _g_fgm = grp_sorted["FGM"].values.astype(float)
+                _g_fgm3 = grp_sorted["FGM3"].values.astype(float)
+                _g_fta = grp_sorted["FTA"].values.astype(float)
+                _g_orb = grp_sorted["ORB"].values.astype(float)
+                _g_tov = grp_sorted["TOV"].values.astype(float)
+                _g_opp_drb = grp_sorted["opp_DRB"].values.astype(float)
+
+                _game_efg = np.where(
+                    _g_fga > 0,
+                    (_g_fgm + 0.5 * _g_fgm3) / _g_fga,
+                    np.nan,
+                )
+                _td = _g_fga + 0.44 * _g_fta + _g_tov
+                _game_tov = np.where(_td > 0, _g_tov / _td, np.nan)
+                _od = _g_orb + _g_opp_drb
+                _game_orb = np.where(_od > 0, _g_orb / _od, np.nan)
+                _game_ftr = np.where(_g_fga > 0, _g_fta / _g_fga, np.nan)
+
+                for _arr, _key in [
+                    (_game_efg, "efg_wma5"),
+                    (_game_tov, "tov_wma5"),
+                    (_game_orb, "orb_wma5"),
+                    (_game_ftr, "ftr_wma5"),
+                ]:
+                    _tail = _arr[np.isfinite(_arr)][-5:]
+                    if len(_tail) > 0:
+                        stats[_key] = _wma5_rolling(_tail)
             else:
                 stats.update({
                     "off_efg": 0.50, "off_tov_pct": 0.15, "off_orb_pct": 0.25, "off_ft_rate": 0.30,
@@ -422,12 +501,14 @@ def build_prediction_features(
         away_orb_matchup = a_s["off_orb_pct"] - h_s["def_drb_pct"]
         away_ftr_matchup = a_s["off_ft_rate"] - h_s["def_ft_rate"]
 
-        h_form = h_s.get("form_wma5")
-        a_form = a_s.get("form_wma5")
-        if h_form is not None and a_form is not None:
-            net_form_wma5 = h_form - a_form
-        else:
-            net_form_wma5 = np.nan
+        _wma_features: dict = {}
+        for _factor in ["efg", "tov", "orb", "ftr"]:
+            _h_val = h_s.get(f"{_factor}_wma5")
+            _a_val = a_s.get(f"{_factor}_wma5")
+            if _h_val is not None and _a_val is not None:
+                _wma_features[f"net_{_factor}_wma5"] = _h_val - _a_val
+            else:
+                _wma_features[f"net_{_factor}_wma5"] = np.nan
 
         feat: dict = {
             "elo_diff_scaled": (elo_h - elo_a) / 25.0,
@@ -435,8 +516,8 @@ def build_prediction_features(
             "net_tov": home_tov_matchup - away_tov_matchup,
             "net_orb": home_orb_matchup - away_orb_matchup,
             "net_ftr": home_ftr_matchup - away_ftr_matchup,
+            **_wma_features,
             "round_progress":  round_number / max_rounds,
-            "net_form_wma5": net_form_wma5,
         }
         rows.append(feat)
 

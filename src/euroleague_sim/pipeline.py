@@ -397,7 +397,8 @@ def predict_next_round(
             round_number=int(round_number),
             elo_base=cfg.elo.base,
         )
-        has_form = ml_features["net_form_wma5"].notna()
+        _form_cols = ["net_efg_wma5", "net_tov_wma5", "net_orb_wma5", "net_ftr_wma5"]
+        has_form = ml_features[_form_cols].notna().all(axis=1)
 
         if has_form.any():
             ml_pred = predictor.predict(ml_features.loc[has_form])

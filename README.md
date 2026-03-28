@@ -10,23 +10,26 @@ In the EuroLeague, Home Court Advantage is fundamentally a defensive phenomenon.
 
 ## Training diagnostics
 
-The figure below is produced when you run `euroleague-sim train` (saved as `plots/training_diagnostics.png`). It shows logistic coefficients for the ten features, feature correlations, out-of-fold probability calibration, and ridge margin fit—supporting the conclusion above.
+The figure below is produced when you run `euroleague-sim train` (saved as `plots/training_diagnostics.png`). It shows logistic coefficients for the 10 features, feature correlations, out-of-fold probability calibration, and ridge margin fit—supporting the conclusion above.
 
 ![Euroleague ML training diagnostics](./plots/training_diagnostics.png)
 
 
 
-## The 7 features
+## The 10 features
 
 These are the columns fed to the ML models (see `src/euroleague_sim/ml/features.py`, `FEATURE_COLS`):
 
-1. `elo_diff_scaled`
-2. `net_efg`
-3. `net_tov`
-4. `net_orb`
-5. `net_ftr`
-6. `round_progress`
-7. `net_form_wma5` -- 5-game weighted moving average of NetPer100 (home minus away), capturing recent form with linear decay weights [5, 4, 3, 2, 1]
+1. `elo_diff_scaled` -- (Elo_home - Elo_away) / 25
+2. `net_efg` -- season-average matchup differential: eFG%
+3. `net_tov` -- season-average matchup differential: TOV%
+4. `net_orb` -- season-average matchup differential: ORB%
+5. `net_ftr` -- season-average matchup differential: FT rate
+6. `net_efg_wma5` -- 5-game WMA recent form: eFG% (home - away), linear decay weights [5, 4, 3, 2, 1]
+7. `net_tov_wma5` -- 5-game WMA recent form: TOV% (home - away)
+8. `net_orb_wma5` -- 5-game WMA recent form: ORB% (home - away)
+9. `net_ftr_wma5` -- 5-game WMA recent form: FT rate (home - away)
+10. `round_progress` -- round / max_rounds
 
 ## How to run
 

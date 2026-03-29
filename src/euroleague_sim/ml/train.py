@@ -137,32 +137,13 @@ def train_models(
         "metrics": metrics,
     }
     
-    # Extract feature weights
-    def _get_weights(est: Any) -> tuple[Dict[str, float], str]:
-        if hasattr(est, "coef_"):
-            coefs = est.coef_
-            if coefs.ndim > 1:
-                coefs = coefs[0]
-            return dict(zip(FEATURE_COLS, coefs.tolist())), "coefficients"
-        elif hasattr(est, "feature_importances_"):
-            importances = est.feature_importances_
-            return dict(zip(FEATURE_COLS, importances.tolist())), "importances"
-        return {}, ""
-
-    # Unwrap calibrated classifier if needed
-    base_win = win_est
-    if hasattr(win_est, "calibrated_classifiers_") and len(win_est.calibrated_classifiers_) > 0:
-        base_win = win_est.calibrated_classifiers_[0].estimator
-    elif hasattr(win_est, "estimator"):
-        base_win = win_est.estimator
-    elif hasattr(win_est, "base_estimator"):
-        base_win = win_est.base_estimator
-        
-    win_weights, win_weight_type = _get_weights(base_win)
+    from .weights import get_weights_from_estimator
+    
+    win_weights, win_weight_type = get_weights_from_estimator(win_est, FEATURE_COLS)
     if win_weights:
         meta[f"win_{win_weight_type}"] = win_weights
         
-    margin_weights, margin_weight_type = _get_weights(margin_est)
+    margin_weights, margin_weight_type = get_weights_from_estimator(margin_est, FEATURE_COLS)
     if margin_weights:
         meta[f"margin_{margin_weight_type}"] = margin_weights
 

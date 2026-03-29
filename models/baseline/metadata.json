@@ -22,13 +22,13 @@
     "margin_rmse": 12.064566573856654
   },
   "win_coefficients": {
-    "elo_diff_scaled": 0.38302165598028093,
-    "net_efg_wma5": 0.0766144439882403,
-    "net_tov_wma5": -0.10053282391607507,
-    "net_orb_wma5": 0.1380907099657758,
-    "net_ftr_wma5": 0.06566681383120475,
-    "round_progress": 0.0176109751033393,
-    "el_rest_days_diff": 0.005645109987390526
+    "elo_diff_scaled": 0.44369099958248864,
+    "net_efg_wma5": 0.08090474553660203,
+    "net_tov_wma5": -0.11417881159834416,
+    "net_orb_wma5": 0.15314741228892456,
+    "net_ftr_wma5": 0.051622411947881704,
+    "round_progress": -0.001218875064585602,
+    "el_rest_days_diff": 0.042687147119195384
   },
   "margin_coefficients": {
     "elo_diff_scaled": 2.404684278683893,

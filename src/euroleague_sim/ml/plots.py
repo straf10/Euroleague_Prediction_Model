@@ -38,20 +38,11 @@ def save_training_diagnostics(
     # --- 1) Feature importance (tornado or bar) ---
     ax1 = axes[0, 0]
     
-    # Unwrap calibrated classifier
-    base_win = win_est
-    if hasattr(win_est, "calibrated_classifiers_") and len(win_est.calibrated_classifiers_) > 0:
-        # Use the first fitted fold's estimator to extract coefficients
-        base_win = win_est.calibrated_classifiers_[0].estimator
-    elif hasattr(win_est, "estimator"):
-        base_win = win_est.estimator
-    elif hasattr(win_est, "base_estimator"):
-        base_win = win_est.base_estimator
-
-    if hasattr(base_win, "coef_"):
-        coefs = base_win.coef_
-        if coefs.ndim > 1:
-            coefs = coefs[0]
+    from .weights import get_weights_from_estimator
+    weights_dict, weight_type = get_weights_from_estimator(win_est, names)
+    
+    if weight_type == "coefficients":
+        coefs = np.array([weights_dict[n] for n in names])
         order = np.argsort(np.abs(coefs))
         names_s = [names[i] for i in order]
         vals_s = coefs[order]
@@ -63,8 +54,8 @@ def save_training_diagnostics(
             "Linear coefficients\n"
             "(+ → higher P(home win); − → higher P(away win))"
         )
-    elif hasattr(base_win, "feature_importances_"):
-        importances = base_win.feature_importances_
+    elif weight_type == "importances":
+        importances = np.array([weights_dict[n] for n in names])
         order = np.argsort(importances)
         names_s = [names[i] for i in order]
         vals_s = importances[order]

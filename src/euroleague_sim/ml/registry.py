@@ -19,7 +19,7 @@ def get_baseline_model() -> Dict[str, Any]:
             method="sigmoid",
             cv=3,
         ),
-        "margin": Ridge(alpha=75.0, random_state=42),
+        "margin": Ridge(alpha=106.18, random_state=42),
         "requires_scaling": True,
     }
 

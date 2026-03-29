@@ -277,17 +277,13 @@ def build_round_schedule_v2(
 # Step 10: ML training pipeline
 # ---------------------------------------------------------------------------
 
-def train_ml_pipeline(
+def prepare_training_data(
     cache: Cache,
     cfg: ProjectConfig,
     current_season: int,
-    model_name: str = "baseline",
     verbose: bool = True,
-) -> Dict[str, float]:
-    """Build training data from multiple seasons, train linear models, save artefacts.
-
-    Returns the evaluation metrics dict.
-    """
+) -> pd.DataFrame:
+    """Load cached seasonal features, run Elo, and build the shared training dataset."""
     seasons_data: Dict[int, Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]] = {}
     start = current_season - cfg.season.history_seasons
 
@@ -328,6 +324,22 @@ def train_ml_pipeline(
     if verbose:
         print(f"  [train] Training dataset: {len(train_df)} rows x "
               f"{len(train_df.columns)} columns")
+        
+    return train_df
+
+
+def train_ml_pipeline(
+    cache: Cache,
+    cfg: ProjectConfig,
+    current_season: int,
+    model_name: str = "baseline",
+    verbose: bool = True,
+) -> Dict[str, float]:
+    """Build training data from multiple seasons, train linear models, save artefacts.
+
+    Returns the evaluation metrics dict.
+    """
+    train_df = prepare_training_data(cache, cfg, current_season, verbose)
 
     model_dir = Path(cfg.ml.model_dir)
     metrics = train_models(

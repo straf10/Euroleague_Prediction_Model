@@ -348,6 +348,7 @@ def train_ml_pipeline(
         model_name=model_name,
         seed=42,
         cv_folds=cfg.ml.cv_folds,
+        wfo_min_train_size=cfg.ml.wfo_min_train_size,
         verbose=verbose,
     )
     return metrics

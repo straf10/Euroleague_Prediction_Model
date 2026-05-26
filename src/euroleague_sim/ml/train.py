@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Union
 
 import numpy as np
 import pandas as pd
@@ -15,7 +15,32 @@ from sklearn.model_selection import TimeSeriesSplit
 
 from .features import FEATURE_COLS
 from .registry import MODEL_REGISTRY, get_model
-from .evaluate import evaluate_model
+from .calibration import fit_catboost_es
+from .evaluate import (
+    EvalResult,
+    build_wfo_periods,
+    evaluate_model,
+    walk_forward_evaluate,
+)
+
+
+def _evaluate(
+    model_dict: Dict[str, Any],
+    X: np.ndarray,
+    y_cls: np.ndarray,
+    y_reg: np.ndarray,
+    *,
+    tscv: TimeSeriesSplit,
+    periods: np.ndarray,
+    wfo_min_train_size: int,
+) -> EvalResult:
+    """Dispatch to walk-forward or TimeSeriesSplit evaluation per model config."""
+    if model_dict.get("walk_forward", False):
+        return walk_forward_evaluate(
+            model_dict, X, y_cls, y_reg, periods,
+            min_train_size=wfo_min_train_size,
+        )
+    return evaluate_model(model_dict, X, y_cls, y_reg, tscv)
 
 
 def train_models(
@@ -25,9 +50,11 @@ def train_models(
     model_name: str = "baseline",
     seed: int = 42,
     cv_folds: int = 5,
+    wfo_min_train_size: int = 200,
+    wfo_step: Union[str, int] = "round",
     verbose: bool = True,
 ) -> Dict[str, float]:
-    """Train linear ML models, evaluate, and persist.
+    """Train ML models, evaluate (TimeSeriesSplit or Walk-Forward), and persist.
 
     Parameters
     ----------
@@ -36,7 +63,10 @@ def train_models(
     model_dir : directory where trained artefacts will be saved.
     model_name : name of the model to train from the registry, or "all" for leaderboard.
     seed : random state for reproducibility.
-    cv_folds : number of `TimeSeriesSplit` folds.
+    cv_folds : number of `TimeSeriesSplit` folds (non-WFO models).
+    wfo_min_train_size : min expanding-window rows before a WFO period is scored.
+    wfo_step : walk-forward granularity — ``"round"`` (precise, used for final
+        evaluation), ``"season"``, or an int block-size of rounds.
     verbose : if True, print progress to stdout.
 
     Returns
@@ -67,16 +97,20 @@ def train_models(
         raise ValueError(f"Need more than {cv_folds} training rows for TimeSeriesSplit(n_splits={cv_folds}).")
 
     tscv = TimeSeriesSplit(n_splits=cv_folds)
+    periods = build_wfo_periods(ordered_df, step=wfo_step)
 
     if model_name == "all":
         _log("Running leaderboard evaluation for all models...")
         print(f"\n  {'='*80}")
         print(f"  {'Model':<25s} | {'Log-Loss':<9s} | {'Brier':<7s} | {'Acc':<6s} | {'MAE':<6s} | {'RMSE':<6s}")
         print(f"  {'-'*80}")
-        
+
         for name, factory in MODEL_REGISTRY.items():
             model_dict = factory()
-            eval_res = evaluate_model(model_dict, X, y_cls, y_reg, tscv)
+            eval_res = _evaluate(
+                model_dict, X, y_cls, y_reg,
+                tscv=tscv, periods=periods, wfo_min_train_size=wfo_min_train_size,
+            )
             m = eval_res.metrics
             print(f"  {model_dict['name']:<25s} | {m['log_loss']:<9.4f} | {m['brier_score']:<7.4f} | "
                   f"{m['cv_accuracy']:<6.3f} | {m['margin_mae']:<6.2f} | {m['margin_rmse']:<6.2f}")
@@ -85,9 +119,13 @@ def train_models(
 
     # Single model training
     model_dict = get_model(model_name)
-    _log(f"Evaluating {model_dict['name']} (cross-validation) …")
-    
-    eval_res = evaluate_model(model_dict, X, y_cls, y_reg, tscv)
+    _eval_mode = "walk-forward" if model_dict.get("walk_forward", False) else "time-series CV"
+    _log(f"Evaluating {model_dict['name']} ({_eval_mode}) …")
+
+    eval_res = _evaluate(
+        model_dict, X, y_cls, y_reg,
+        tscv=tscv, periods=periods, wfo_min_train_size=wfo_min_train_size,
+    )
     metrics = eval_res.metrics
     
     # ---- Print summary ----
@@ -117,7 +155,7 @@ def train_models(
     margin_est = model_dict["margin"]
     
     win_est.fit(X_fit, y_cls)
-    margin_est.fit(X_fit, y_reg)
+    margin_est = fit_catboost_es(margin_est, X_fit, y_reg)
 
     # ---- Persist ----
     out_dir = model_dir / model_name

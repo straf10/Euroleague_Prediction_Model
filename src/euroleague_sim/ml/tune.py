@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import optuna
 import matplotlib.pyplot as plt
+from catboost import CatBoostClassifier, CatBoostRegressor
 from optuna.visualization.matplotlib import plot_optimization_history
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression, Ridge
@@ -25,8 +26,9 @@ from sklearn.model_selection import TimeSeriesSplit
 from ..config import ProjectConfig
 from ..data.cache import Cache
 from ..pipeline import prepare_training_data
+from .calibration import BetaCalibratedClassifier
+from .evaluate import build_wfo_periods, evaluate_model, walk_forward_evaluate
 from .features import FEATURE_COLS
-from .evaluate import evaluate_model
 
 
 def main(argv=None):
@@ -36,7 +38,17 @@ def main(argv=None):
     parser.add_argument("--cache-dir", default="data_cache", help="Folder for cached data")
     parser.add_argument("--config", default=None, help="Path to config.json (optional)")
     parser.add_argument("--season", type=int, default=2025, help="Current season start year")
+    parser.add_argument(
+        "--wfo-step",
+        default="season",
+        help="Walk-forward granularity for CatBoost tuning: 'round', 'season', "
+             "or an int block-size of rounds (default: 'season' for fast tuning). "
+             "Final evaluation in `train` always uses 'round'.",
+    )
     args = parser.parse_args(argv or sys.argv[1:])
+
+    # Coarse WFO during tuning trades a little OOS precision for far fewer refits.
+    wfo_step: object = int(args.wfo_step) if str(args.wfo_step).isdigit() else args.wfo_step
     
     cfg = ProjectConfig.default()
     if args.config:
@@ -58,7 +70,9 @@ def main(argv=None):
     X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
     
     tscv = TimeSeriesSplit(n_splits=cfg.ml.cv_folds)
-    
+    periods = build_wfo_periods(ordered_df, step=wfo_step)
+    print(f"  CatBoost WFO tuning step: '{wfo_step}'  ({len(np.unique(periods))} periods)")
+
     print(f"\n{'='*80}")
     print(f"  Study 1: Tuning LogisticRegression (Win Probability)")
     print(f"{'='*80}")
@@ -79,7 +93,7 @@ def main(argv=None):
         return eval_result.metrics["log_loss"]
 
     study_win = optuna.create_study(direction="minimize")
-    study_win.optimize(objective_win, n_trials=args.trials)
+    study_win.optimize(objective_win, n_trials=args.trials, n_jobs=-1)
     
     print(f"\n{'='*80}")
     print(f"  Study 2: Tuning Ridge (Point Margin)")
@@ -101,8 +115,54 @@ def main(argv=None):
         return eval_result.metrics["margin_mae"]
 
     study_margin = optuna.create_study(direction="minimize")
-    study_margin.optimize(objective_margin, n_trials=args.trials)
-    
+    study_margin.optimize(objective_margin, n_trials=args.trials, n_jobs=-1)
+
+    print(f"\n{'='*80}")
+    print(f"  Study 3: Tuning CatBoost (Beta-cal win + margin) via Walk-Forward")
+    print(f"{'='*80}")
+
+    def objective_catboost(trial) -> float:
+        depth = trial.suggest_int("depth", 2, 5)
+        l2_leaf_reg = trial.suggest_float("l2_leaf_reg", 1.0, 30.0, log=True)
+        learning_rate = trial.suggest_float("learning_rate", 0.01, 0.1, log=True)
+        iterations = trial.suggest_int("iterations", 200, 800, step=100)
+        bagging_temperature = trial.suggest_float("bagging_temperature", 0.0, 2.0)
+
+        common = dict(
+            depth=depth,
+            l2_leaf_reg=l2_leaf_reg,
+            learning_rate=learning_rate,
+            iterations=iterations,
+            random_seed=42,
+            bootstrap_type="Bayesian",
+            bagging_temperature=bagging_temperature,
+            early_stopping_rounds=50,
+            # Parallelism comes from Optuna's n_jobs=-1 (one thread per trial);
+            # pin each CatBoost fit to 1 thread to avoid CPU oversubscription.
+            thread_count=1,
+            allow_writing_files=False,
+            verbose=False,
+        )
+        model_dict = {
+            "name": "Tuning CatBoost",
+            "win": BetaCalibratedClassifier(
+                CatBoostClassifier(loss_function="Logloss", **common),
+                calib_fraction=0.25,
+                min_calib_samples=30,
+            ),
+            "margin": CatBoostRegressor(loss_function="RMSE", **common),
+            "requires_scaling": False,
+            "walk_forward": True,
+        }
+        eval_result = walk_forward_evaluate(
+            model_dict, X, y_win, y_margin, periods,
+            min_train_size=cfg.ml.wfo_min_train_size,
+        )
+        return eval_result.metrics["log_loss"]
+
+    study_catboost = optuna.create_study(direction="minimize")
+    study_catboost.optimize(objective_catboost, n_trials=args.trials, n_jobs=-1)
+
     print(f"\n{'='*80}")
     print(f"  Tuning Complete")
     print(f"{'='*80}")
@@ -110,6 +170,8 @@ def main(argv=None):
     print(f"  Best Win Params: {study_win.best_params}")
     print(f"  Best Margin Model (MAE): {study_margin.best_value:.4f}")
     print(f"  Best Margin Params: {study_margin.best_params}")
+    print(f"  Best CatBoost (WFO LogLoss): {study_catboost.best_value:.4f}")
+    print(f"  Best CatBoost Params: {study_catboost.best_params}")
     print(f"  -> Update these in src/euroleague_sim/ml/registry.py")
     print(f"{'='*80}\n")
     
@@ -123,7 +185,11 @@ def main(argv=None):
     plot_optimization_history(study_margin)
     plt.gcf().savefig(plots_dir / "tuning_history_margin.png", dpi=150, bbox_inches="tight")
     plt.close()
-    
+
+    plot_optimization_history(study_catboost)
+    plt.gcf().savefig(plots_dir / "tuning_history_catboost.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
     print(f"Saved optimization plots to {plots_dir.resolve()}")
     
     return 0

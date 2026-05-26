@@ -39,7 +39,8 @@ class ShrinkageConfig:
 class MLConfig:
     """Configuration for ML model training."""
     model_dir: str = "models"        # directory for persisted model artefacts
-    cv_folds: int = 5
+    cv_folds: int = 5                # TimeSeriesSplit folds (non-WFO models)
+    wfo_min_train_size: int = 200    # min expanding-window rows before a WFO period is scored
 
 
 @dataclass(frozen=True)

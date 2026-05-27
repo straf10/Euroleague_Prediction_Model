@@ -11,6 +11,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import gc
+import os
 import sys
 from pathlib import Path
 
@@ -88,6 +90,9 @@ def main(argv=None):
 
     study_win = study_margin = study_catboost = None
 
+    # Safe n_jobs: avoid OOM by limiting parallelism. Use half the available CPUs.
+    safe_n_jobs = max(1, os.cpu_count() // 2) if os.cpu_count() else 1
+
     # ── Study 1: LogisticRegression (Win Probability) ─────────────────────────
     if 1 in run_studies:
         print(f"\n{'='*80}")
@@ -107,10 +112,12 @@ def main(argv=None):
                 "requires_scaling": True,
             }
             eval_result = evaluate_model(model_dict, X, y_win, y_margin, tscv)
-            return eval_result.metrics["log_loss"]
+            result = eval_result.metrics["log_loss"]
+            gc.collect()
+            return result
 
         study_win = optuna.create_study(direction="minimize")
-        study_win.optimize(objective_win, n_trials=args.trials, n_jobs=-1)
+        study_win.optimize(objective_win, n_trials=args.trials, n_jobs=safe_n_jobs)
 
     # ── Study 2: Ridge (Point Margin) ─────────────────────────────────────────
     if 2 in run_studies:
@@ -131,10 +138,12 @@ def main(argv=None):
                 "requires_scaling": True,
             }
             eval_result = evaluate_model(model_dict, X, y_win, y_margin, tscv)
-            return eval_result.metrics["margin_mae"]
+            result = eval_result.metrics["margin_mae"]
+            gc.collect()
+            return result
 
         study_margin = optuna.create_study(direction="minimize")
-        study_margin.optimize(objective_margin, n_trials=args.trials, n_jobs=-1)
+        study_margin.optimize(objective_margin, n_trials=args.trials, n_jobs=safe_n_jobs)
 
     # ── Study 3: CatBoost (Beta-cal win + margin) via Walk-Forward ────────────
     if 3 in run_studies:
@@ -158,7 +167,7 @@ def main(argv=None):
                 bootstrap_type="Bayesian",
                 bagging_temperature=bagging_temperature,
                 early_stopping_rounds=50,
-                # Parallelism comes from Optuna's n_jobs=-1 (one thread per trial);
+                # Parallelism comes from Optuna's n_jobs (limited to safe_n_jobs);
                 # pin each CatBoost fit to 1 thread to avoid CPU oversubscription.
                 thread_count=1,
                 allow_writing_files=False,
@@ -179,10 +188,12 @@ def main(argv=None):
                 model_dict, X, y_win, y_margin, periods,
                 min_train_size=cfg.ml.wfo_min_train_size,
             )
-            return eval_result.metrics["log_loss"]
+            result = eval_result.metrics["log_loss"]
+            gc.collect()
+            return result
 
         study_catboost = optuna.create_study(direction="minimize")
-        study_catboost.optimize(objective_catboost, n_trials=args.trials, n_jobs=-1)
+        study_catboost.optimize(objective_catboost, n_trials=args.trials, n_jobs=safe_n_jobs)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'='*80}")

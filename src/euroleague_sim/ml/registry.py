@@ -36,29 +36,35 @@ def get_catboost_model() -> Dict[str, Any]:
     and a slow learning rate to avoid overfitting ~1000 rows. The win classifier
     is wrapped in :class:`BetaCalibratedClassifier` to correct tail miscalibration
     out-of-sample. Trees are scale-invariant, so no ``StandardScaler`` is needed.
+
+    Parameters tuned via Optuna (100 trials, WFO step=3, 2026-05-28):
+    - iterations: 700 (increased from 400 for better convergence)
+    - learning_rate: 0.0103 (slower, more stable)
+    - l2_leaf_reg: 1.016 (lighter regularisation, new features carry signal)
+    - bagging_temperature: 1.112 (slight increase for diversity)
     """
     win_clf = CatBoostClassifier(
-        iterations=400,
+        iterations=700,
         depth=3,
-        learning_rate=0.03,
-        l2_leaf_reg=10.0,
+        learning_rate=0.010320567583828568,
+        l2_leaf_reg=1.016367295616664,
         loss_function="Logloss",
         random_seed=42,
         bootstrap_type="Bayesian",
-        bagging_temperature=1.0,
+        bagging_temperature=1.1124712815306341,
         early_stopping_rounds=50,
         allow_writing_files=False,
         verbose=False,
     )
     margin_reg = CatBoostRegressor(
-        iterations=400,
+        iterations=700,
         depth=3,
-        learning_rate=0.03,
-        l2_leaf_reg=10.0,
+        learning_rate=0.010320567583828568,
+        l2_leaf_reg=1.016367295616664,
         loss_function="RMSE",
         random_seed=42,
         bootstrap_type="Bayesian",
-        bagging_temperature=1.0,
+        bagging_temperature=1.1124712815306341,
         early_stopping_rounds=50,
         allow_writing_files=False,
         verbose=False,

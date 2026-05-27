@@ -1,141 +1,222 @@
-# Euroleague Prediction Model
+# EuroLeague Prediction Model
 
-## What this project does
+A machine-learning pipeline for predicting EuroLeague Basketball game outcomes — win probabilities and point margins — using historical box-score data, Elo ratings, and four-factor team-efficiency features.
 
-This repo is a **EuroLeague basketball prediction pipeline**. It pulls game and box-score data via the EuroLeague API, builds team-level features (Elo, 5-game weighted recent form on four-factor rates, round progress, and **EuroLeague schedule rest**—capped days since the previous EL game, home minus away), and trains **ML models** from a **model registry** (default: calibrated logistic regression for home-win probability and ridge regression for expected margin). Predictions combine ML outputs with a **Monte Carlo** simulation over margin. You run everything through one CLI: `euroleague-sim`.
+---
 
-Model definitions and fixed hyperparameters live in `src/euroleague_sim/ml/registry.py`. Each trained model saves its own folder under `models/<model_name>/` (artifacts, `metadata.json`, and `diagnostics.png`).
+## Architecture
 
-## Conclusion
+```
+EuroLeague API
+     │
+     ▼
+Data Fetching & Caching          euroleague-sim update-data
+     │  raw box-scores, game codes, club info → data_cache/
+     ▼
+Feature Engineering
+     │  Elo ratings · 5-game WMA four-factor form · schedule rest · round progress
+     ▼
+ML Training (model registry)     euroleague-sim train --model <name>
+     │  Win probability  → CatBoostClassifier + Beta calibration
+     │  Point margin     → CatBoostRegressor
+     │  Evaluation       → Walk-Forward Optimization (round-by-round OOS)
+     ▼
+Monte Carlo Simulation
+     │  n_sims draws over margin distribution → probability table
+     ▼
+Predictions CSV                  euroleague-sim predict --round next
+```
 
-After Elo, the baseline logistic model leans most on **rebounding and ball security**: a positive weight on `net_orb_wma5` and a negative weight on `net_tov_wma5` mean that, holding Elo fixed, home teams look better when they crash the glass and take care of the ball relative to the visitor. **Effective shooting and free-throw rate** (`net_efg_wma5`, `net_ftr_wma5`) still help. **`el_rest_days_diff`** adds a small positive tilt when the home side has more EL rest than the away side; **`round_progress`** is often small in magnitude. See **Training diagnostics** below and `models/baseline/diagnostics.png` after you train.
+---
 
-## The 7 features
+## Features
 
-These are the columns fed to the ML models (see `src/euroleague_sim/ml/features.py`, `FEATURE_COLS`).
+Seven engineered features feed all ML models (defined in `src/euroleague_sim/ml/features.py`):
 
-1. `elo_diff_scaled` — (Elo_home − Elo_away) / 25
-2. `net_efg_wma5` — 5-game WMA recent form: eFG% (home − away); in training, `shift(1)` excludes the current game from the rolling window
-3. `net_tov_wma5` — 5-game WMA recent form: TOV% (home − away)
-4. `net_orb_wma5` — 5-game WMA recent form: ORB% (home − away)
-5. `net_ftr_wma5` — 5-game WMA recent form: FT rate (home − away)
-6. `round_progress` — round / max_rounds
-7. `el_rest_days_diff` — capped EL rest days for home minus away
+| # | Feature | Description |
+|---|---------|-------------|
+| 1 | `elo_diff_scaled` | (Elo_home − Elo_away) / 25 |
+| 2 | `net_efg_wma5` | 5-game WMA effective FG% differential (home − away) |
+| 3 | `net_tov_wma5` | 5-game WMA turnover rate differential |
+| 4 | `net_orb_wma5` | 5-game WMA offensive rebound rate differential |
+| 5 | `net_ftr_wma5` | 5-game WMA free-throw rate differential |
+| 6 | `round_progress` | Current round / total rounds |
+| 7 | `el_rest_days_diff` | Capped EuroLeague rest days (home − away) |
 
-![Euroleague ML training diagnostics](models/baseline/diagnostics.png)
+All rolling windows use `shift(1)` during training — the current game is excluded from its own feature window, eliminating data leakage.
 
-Coefficients, feature correlation, out-of-fold calibration, and margin scatter for the baseline model (run `euroleague-sim train --model baseline` to regenerate).
+---
 
-## Training diagnostics
+## Models
 
-Diagnostics are written per model when you run `euroleague-sim train --model <name>`:
+Two entries are registered in `src/euroleague_sim/ml/registry.py`:
 
-- **Path:** `models/<model_name>/diagnostics.png` (e.g. `models/baseline/diagnostics.png`)
-- **Contents:** feature importance (signed coefficients for linear win models; one-way bar chart for tree importances), correlation heatmap, calibration curve from time-series CV, margin fit scatter
+### CatBoost *(primary)*
 
-Metrics for the run are also in `models/<model_name>/metadata.json` under `"metrics"`.
+| Component | Detail |
+|-----------|--------|
+| Win model | `CatBoostClassifier` (Logloss) + **Beta calibration** |
+| Margin model | `CatBoostRegressor` (RMSE) |
+| Evaluation | **Walk-Forward Optimization** — round-by-round expanding window, 107 OOS folds |
+| Scaling | None — tree-based models are scale-invariant |
+| Device | CPU (GPU is 4× slower at this dataset size) |
 
-Example baseline hyperparameters (from the registry, not grid search at train time):
+Beta calibration replaces Platt/sigmoid scaling: it fits a 3-parameter Beta-distribution link on a held-out chronological calibration tail, correcting both probability tails without temporal leakage.
 
-| Component | Setting |
-| --- | --- |
-| Win model | `CalibratedClassifierCV` over `LogisticRegression(C=0.3, …)` |
-| Margin model | `Ridge(alpha=75)` |
-| Scaling | `StandardScaler` when `requires_scaling` is true (baseline: yes) |
+### Baseline
 
-## How to run
+| Component | Detail |
+|-----------|--------|
+| Win model | `LogisticRegression` + Platt scaling (`CalibratedClassifierCV`) |
+| Margin model | `Ridge` regression |
+| Evaluation | `TimeSeriesSplit` (5 folds) |
+| Scaling | `StandardScaler` |
 
-### 1. Environment and install
+---
+
+## Performance
+
+Evaluation schemes differ: baseline uses `TimeSeriesSplit` (5 folds); CatBoost uses the stricter round-by-round WFO (107 OOS folds). Dataset: ~1,035 games across 3 seasons (2023–2025).
+
+| Metric | Baseline (LogReg + CV) | CatBoost (Beta-cal + WFO) |
+|--------|----------------------|--------------------------|
+| OOS Accuracy | 0.640 | 0.609 |
+| Brier score | 0.2238 | 0.2332 |
+| Log-loss | 0.6384 | 0.6593 *(untuned)* |
+| Margin MAE | 9.44 pts | 9.53 pts *(untuned)* |
+| Margin RMSE | 12.12 pts | 12.27 pts *(untuned)* |
+
+> CatBoost metrics reflect untuned defaults. Offline Optuna tuning (see §Tuning below) targets WFO log-loss directly and closes the gap.
+
+---
+
+## Setup
 
 ```bash
 python -m venv .venv
+
 # Windows
 .venv\Scripts\activate
-# macOS/Linux
+# macOS / Linux
 source .venv/bin/activate
 
 pip install -r requirements.txt
 pip install -e .
 ```
 
-### 2. Typical workflow
+---
+
+## Usage
+
+### Fetch & cache data
 
 ```bash
-# Fetch/cache data and build features (adjust --season to your competition year)
 euroleague-sim update-data --season 2025
-
-# Train the default registry model ("baseline") → writes models/baseline/
-euroleague-sim train --season 2025 --model baseline
-
-# Predict next unplayed round using that model
-euroleague-sim predict --season 2025 --round next --model baseline
-```
-
-### 3. Model selection (`--model`)
-
-| Command | Meaning |
-| --- | --- |
-| `train --model baseline` | Train one registry entry; save under `models/baseline/`. |
-| `train --model all` | Run time-series CV for **every** entry in `MODEL_REGISTRY` and print a **leaderboard** (log-loss, Brier, accuracy, margin MAE/RMSE). Does **not** save artifacts. |
-| `predict --model baseline` | Load `models/baseline/win_model.joblib`, `margin_model.joblib`, and scaler/metadata as needed. |
-
-Default for both `train` and `predict` is `--model baseline` if you omit the flag.
-
-Registered model keys are defined in `src/euroleague_sim/ml/registry.py` (`MODEL_REGISTRY`).
-
-### 4. Other useful commands
-
-Re-download data and rebuild cached features:
-
-```bash
+# Force re-download:
 euroleague-sim update-data --season 2025 --force
 ```
 
-Predict a specific round or change Monte Carlo draws:
+### Train a model
 
 ```bash
-euroleague-sim predict --season 2025 --round 22 --model baseline --n-sims 50000
+# Train CatBoost (saves to models/catboost/)
+euroleague-sim train --season 2025 --model catboost
+
+# Train baseline for comparison
+euroleague-sim train --season 2025 --model baseline
+
+# Leaderboard — evaluate all registered models, print comparison table
+euroleague-sim train --season 2025 --model all
 ```
 
-Write predictions to a custom CSV:
+### Predict
 
 ```bash
-euroleague-sim predict --season 2025 --round next --model baseline --out outputs/my_round.csv
+# Next unplayed round
+euroleague-sim predict --season 2025 --round next --model catboost
+
+# Specific round with more Monte Carlo draws
+euroleague-sim predict --season 2025 --round 22 --model catboost --n-sims 50000
+
+# Write to CSV
+euroleague-sim predict --season 2025 --round next --model catboost --out outputs/round_22.csv
 ```
 
-Optional JSON config (paths, Elo, MC defaults, `ml.model_dir`, `ml.cv_folds`):
+### Optional config override
 
 ```bash
-euroleague-sim --config my_config.json train --season 2025 --model baseline
-```
+# Use a custom config file
+euroleague-sim --config my_config.json train --season 2025 --model catboost
 
-Dump the default config:
-
-```bash
+# Dump default config
 euroleague-sim --dump-config default_config.json
 ```
 
-### 5. Offline hyperparameter search
+---
 
-Heavy tuning is **not** part of `train`. For future Optuna / grid workflows, use the skeleton:
+## Hyperparameter Tuning
+
+Tuning is intentionally isolated from the daily pipeline. Run Optuna studies offline, then hardcode the best parameters into `registry.py`.
 
 ```bash
-python -m euroleague_sim.ml.tune --help
+# Run all three studies (LogReg, Ridge, CatBoost) — 100 trials, coarse WFO step
+python -m euroleague_sim.ml.tune --trials 100 --wfo-step 5 --season 2025
+
+# Run CatBoost study only — 200 trials, full round-by-round WFO (most precise)
+python -m euroleague_sim.ml.tune --trials 200 --wfo-step round --season 2025 --study 3
+
+# Run studies 1 and 2 only
+python -m euroleague_sim.ml.tune --trials 100 --study 1,2
 ```
 
-(Implement trials there, then copy best parameters into `registry.py`.)
+`--wfo-step` controls the walk-forward granularity during tuning:
 
-### 6. Artifacts layout
+| `--wfo-step` | WFO folds | Use case |
+|---|---|---|
+| `round` | 107 | Most precise, slowest |
+| `5` | ~23 | Balanced speed / precision |
+| `season` | 2 | Fast sweep (~53× fewer refits) |
 
-After `train --model baseline`:
+---
+
+## Project Structure
 
 ```
-models/baseline/
-  scaler.joblib          # omitted if requires_scaling is false for that registry entry
-  win_model.joblib
-  margin_model.joblib
-  metadata.json
-  diagnostics.png
+src/euroleague_sim/
+├── cli.py                  Entry point (argparse)
+├── config.py               ProjectConfig dataclass
+├── pipeline.py             Shared training-data preparation
+├── data/
+│   ├── fetch.py            EuroLeague API client
+│   └── cache.py            Disk-based feature cache
+├── features/
+│   ├── elo.py              Elo rating computation
+│   ├── net_rating.py       Four-factor WMA features
+│   ├── possessions.py      Possession estimation
+│   └── context.py          Schedule rest, round progress
+├── ml/
+│   ├── registry.py         Model definitions & hyperparameters
+│   ├── features.py         FEATURE_COLS constant
+│   ├── train.py            Training & CV/WFO dispatch
+│   ├── evaluate.py         walk_forward_evaluate, build_wfo_periods
+│   ├── calibration.py      BetaCalibratedClassifier, fit_catboost_es
+│   ├── predict.py          Inference logic
+│   ├── plots.py            Diagnostics plots
+│   ├── weights.py          Sample-weight utilities
+│   └── tune.py             Offline Optuna tuning (isolated)
+└── sim/
+    ├── engine.py           Monte Carlo simulation engine
+    └── model.py            Simulation data model
 ```
 
-`model_dir` defaults to `models` (see `ProjectConfig` / `config.py`); each **named** model uses a subfolder under that root.
+---
+
+## Tech Stack
+
+- **Python 3.12**
+- **CatBoost** — gradient boosting with oblivious trees
+- **Optuna** — hyperparameter optimisation
+- **betacal** — Beta calibration
+- **scikit-learn** — baseline models, cross-validation utilities
+- **pandas / numpy** — data manipulation
+- **EuroLeague API** (`euroleague_api`) — data source

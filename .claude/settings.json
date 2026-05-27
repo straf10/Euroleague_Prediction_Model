@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -c \"import importlib.util as u; [print\\(p, bool\\(u.find_spec\\(p\\)\\)\\) for p in ['catboost','betacal','sklearn','optuna','joblib']]\")",
+      "Bash(.venv/Scripts/python.exe -m pip install \"catboost>=1.2\" \"betacal>=1.1\")",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe -m euroleague_sim.cli train --model all --season 2025)",
+      "Bash(.venv/Scripts/python.exe -m euroleague_sim.cli train --model catboost --season 2025)",
+      "Bash(.venv/Scripts/python.exe -m euroleague_sim.ml.tune --trials 2 --season 2025)",
+      "Bash(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(.venv/Scripts/python.exe -m euroleague_sim.ml.tune --trials 4 --season 2025 --wfo-step season)",
+      "Bash(git commit -m 'Implement SOTA ML upgrades: CatBoost + WFO + Beta calibration + 3 perf levers *)",
+      "Bash(git push *)",
+      "Bash(.venv/Scripts/python.exe -c \"import pandas as pd; df=pd.read_pickle\\('data_cache/raw_boxscore_E2025.pkl'\\); print\\(list\\(df.columns\\)\\); print\\('---shape---', df.shape\\); print\\(df.head\\(3\\).to_string\\(\\)\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import importlib.util as u; print\\('playwright', bool\\(u.find_spec\\('playwright'\\)\\)\\); print\\('aiohttp', bool\\(u.find_spec\\('aiohttp'\\)\\)\\); print\\('bs4', bool\\(u.find_spec\\('bs4'\\)\\)\\)\")"
+    ]
+  }
+}

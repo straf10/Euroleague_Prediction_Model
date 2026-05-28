@@ -1,0 +1,104 @@
+name: Daily predictions update
+
+# Nightly: refresh raw data, top up domestic fatigue, retrain on the latest
+# games, regenerate next-round predictions, then commit the snapshot the
+# Streamlit dashboard reads.
+#
+# The job pushes only data artefacts (data_cache/, models/, outputs/) — never
+# source — so reviewers can always tell humans from the bot from `git log`.
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 02:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season start year (e.g. 2025 = 2025-26)"
+        required: false
+        default: "2025"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SEASON: ${{ github.event.inputs.season || '2025' }}
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Install Playwright browsers
+        run: python -m playwright install --with-deps chromium
+
+      - name: Refresh raw EuroLeague data
+        run: |
+          python -m euroleague_sim.cli update-data --season "$SEASON" --history 2
+
+      - name: Top up domestic fatigue cache (current season only)
+        # Historical seasons (2023, 2024) stay frozen in the cache; we only
+        # rescrape the live one so the nightly run stays under 5 minutes.
+        run: |
+          python scripts/scrape_domestic_history.py --seasons "$SEASON" || \
+            echo "::warning::Domestic scrape failed; keeping previous cache."
+
+      - name: Retrain CatBoost on latest data
+        run: |
+          python -m euroleague_sim.cli train --season "$SEASON" --model catboost
+
+      - name: Predict next round
+        run: |
+          python -m euroleague_sim.cli predict \
+            --season "$SEASON" \
+            --round next \
+            --model catboost
+
+      - name: Show snapshot summary
+        run: |
+          echo "── latest_predictions.csv ──"
+          head -n 20 data_cache/latest_predictions.csv || true
+
+      - name: Commit and push updated artefacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name  "euroleague-bot"
+          git config user.email "actions@users.noreply.github.com"
+
+          git add \
+            data_cache/latest_predictions.csv \
+            data_cache/domestic_matches.pkl \
+            outputs/ \
+            models/ 2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "No artefact changes to commit."
+            exit 0
+          fi
+
+          STAMP="$(date -u +'%Y-%m-%d %H:%M UTC')"
+          git commit -m "chore(data): nightly predictions refresh — ${STAMP}"
+          git push

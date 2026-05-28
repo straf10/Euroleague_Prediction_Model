@@ -13,3 +13,8 @@ matplotlib>=3.7
 optuna>=3.0
 catboost>=1.2
 betacal>=1.1
+# Scraping
+playwright>=1.40
+beautifulsoup4>=4.12
+# Dashboard
+streamlit>=1.30

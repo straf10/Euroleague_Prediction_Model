@@ -513,12 +513,36 @@ def predict_next_round(
 
     # 3) Round schedule
     gamecodes = cache.load_df(_key("raw_gamecodes", season))
+    user_requested_round = round_number is not None
     if round_number is None:
         round_number = get_next_round_number(gamecodes)
 
     schedule = build_round_schedule_v2(fetcher, season, int(round_number))
+    is_offseason = False
+    offseason_fallback_round: Optional[int] = None
     if schedule.empty:
-        raise ValueError(f"No schedule found for season {season} round {round_number}")
+        # Off-season: `get_next_round_number` returned `max_played + 1` but the API
+        # has no fixtures for it. Fall back to the last round that actually has
+        # games so the dashboard never goes blank. Only do this when the caller
+        # didn't pin a specific round.
+        if user_requested_round:
+            raise ValueError(f"No schedule found for season {season} round {round_number}")
+
+        round_col = _pick_any_col(gamecodes, ["Round", "round"])
+        last_played = pd.to_numeric(gamecodes[round_col], errors="coerce").max()
+        if pd.isna(last_played):
+            raise ValueError(
+                f"No upcoming games and no played rounds found for season {season}."
+            )
+        offseason_fallback_round = int(last_played)
+        schedule = build_round_schedule_v2(fetcher, season, offseason_fallback_round)
+        if schedule.empty:
+            raise ValueError(
+                f"Off-season fallback to round {offseason_fallback_round} also "
+                f"returned no schedule for season {season}."
+            )
+        round_number = offseason_fallback_round
+        is_offseason = True
 
     # 4) Matchup features (A, B — for MC fallback when ML models not available)
     matchup = compute_matchup_features(
@@ -527,6 +551,11 @@ def predict_next_round(
         current_elos=current_elos,
         elo_base=cfg.elo.base,
     )
+
+    if "game_date" in schedule.columns:
+        matchup = matchup.merge(
+            schedule[["Gamecode", "game_date"]], on="Gamecode", how="left",
+        )
 
     # 5) ML ensemble prediction
     model_dir = Path(cfg.ml.model_dir)
@@ -545,6 +574,10 @@ def predict_next_round(
             extra_features_by_gamecode=extra_pred,
         )
         has_ml_ready = ml_features[FEATURE_COLS].notna().all(axis=1)
+
+        for col in ("elo_diff_scaled", "net_bpm_diff", "domestic_fatigue_diff"):
+            if col in ml_features.columns:
+                matchup[col] = ml_features[col].values
 
         if has_ml_ready.any():
             ml_pred = predictor.predict(ml_features.loc[has_ml_ready])
@@ -585,7 +618,7 @@ def predict_next_round(
 
     # 7) Clean output
     output_cols = [
-        "Round", "Gamecode", "home_team", "away_team",
+        "Round", "Gamecode", "game_date", "home_team", "away_team",
         # ML
         "pHomeWin_ml",
         # Monte Carlo
@@ -593,10 +626,13 @@ def predict_next_round(
         "q10", "q50", "q90",
         # Context
         "EloCurrent_home", "EloCurrent_away",
+        "elo_diff_scaled", "net_bpm_diff", "domestic_fatigue_diff",
         "A", "B", "margin_ml", "n_sims",
     ]
     output_cols = [c for c in output_cols if c in pred.columns]
-    return pred[output_cols].copy()
+    out = pred[output_cols].copy()
+    out["is_offseason"] = bool(is_offseason)
+    return out
 
 
 def save_predictions(pred_df: pd.DataFrame, season: int, round_number: int, output_dir: Path) -> Path:

@@ -21,7 +21,14 @@ FEATURE_COLS: List[str] = [
     "net_ftr_wma5",              # 5-game WMA recent form: FT rate
     "round_progress",            # round / max_rounds
     "el_rest_days_diff",         # EL schedule density: capped home rest − away rest
+    "net_bpm_diff",              # available-roster BPM: home − away (dynamic injury proxy)
+    "domestic_fatigue_diff",     # rolling-7d domestic minutes: home − away
 ]
+
+# Phase-1 additive features. They default to 0.0 (neutral) when their upstream
+# data sources are unavailable, so the pipeline runs unchanged until the player
+# boxscore / domestic-scraper inputs are wired in (and the model is retrained).
+EXTRA_FEATURE_COLS: List[str] = ["net_bpm_diff", "domestic_fatigue_diff"]
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +169,7 @@ def compute_cumulative_features(team_game_df: pd.DataFrame) -> pd.DataFrame:
 def build_training_dataset(
     seasons_data: Dict[int, Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]],
     max_rounds: int = 34,
+    extra_features_by_gamecode: Dict[Tuple[int, int], Dict[str, float]] | None = None,
 ) -> pd.DataFrame:
     """Create a labelled feature matrix from historical game data.
 
@@ -172,12 +180,16 @@ def build_training_dataset(
         ``team_game_df``       – one row per team-game (from ``build_team_game_net_ratings``)
         ``elo_game_log_df``    – per-game Elo log (``EloResult.game_elos``)
     max_rounds : normalisation constant for ``round_progress``
+    extra_features_by_gamecode : optional ``{(season, gamecode): {feat: value}}``
+        supplying the Phase-1 additive features (``net_bpm_diff``,
+        ``domestic_fatigue_diff``). Missing keys/features default to ``0.0``.
 
     Returns
     -------
     DataFrame with ``FEATURE_COLS`` + target columns ``home_win``, ``margin``,
     and metadata columns ``season``, ``gamecode``, ``round``.
     """
+    extra_features_by_gamecode = extra_features_by_gamecode or {}
     from ..features.context import build_game_context
 
     all_rows: List[dict] = []
@@ -240,11 +252,15 @@ def build_training_dataset(
             else:
                 _rest_diff = 0.0
 
+            _extra = extra_features_by_gamecode.get((int(season), gc), {})
+
             feat: dict = {
                 "elo_diff_scaled": (elo_h - elo_a) / 25.0,
                 **_wma_features,
                 "round_progress":  rnd / max_rounds,
                 "el_rest_days_diff": _rest_diff,
+                "net_bpm_diff": float(_extra.get("net_bpm_diff", 0.0)),
+                "domestic_fatigue_diff": float(_extra.get("domestic_fatigue_diff", 0.0)),
                 # Targets
                 "home_win": int(float(game["home_points"]) > float(game["away_points"])),
                 "margin":   float(game["margin_home"]),
@@ -273,12 +289,18 @@ def build_prediction_features(
     round_number: int,
     elo_base: float = 1500.0,
     max_rounds: int = 34,
+    extra_features_by_gamecode: Dict[int, Dict[str, float]] | None = None,
 ) -> pd.DataFrame:
     """Build the feature matrix for upcoming (unplayed) games.
 
     Uses current Elo values, ``round_progress``, per-team recent-form WMA
     Four Factors, and EuroLeague rest differential (schedule density).
+
+    ``extra_features_by_gamecode`` optionally supplies the Phase-1 additive
+    features keyed by ``Gamecode`` (``net_bpm_diff``, ``domestic_fatigue_diff``);
+    missing entries default to ``0.0``.
     """
+    extra_features_by_gamecode = extra_features_by_gamecode or {}
     from ..features.context import build_prediction_context
 
     _ = team_ratings_df  # kept for API compatibility with existing pipeline call sites
@@ -360,11 +382,15 @@ def build_prediction_features(
         else:
             _rest_diff = 0.0
 
+        _extra = extra_features_by_gamecode.get(gc, {})
+
         feat: dict = {
             "elo_diff_scaled": (elo_h - elo_a) / 25.0,
             **_wma_features,
             "round_progress":  round_number / max_rounds,
             "el_rest_days_diff": _rest_diff,
+            "net_bpm_diff": float(_extra.get("net_bpm_diff", 0.0)),
+            "domestic_fatigue_diff": float(_extra.get("domestic_fatigue_diff", 0.0)),
         }
         rows.append(feat)
 

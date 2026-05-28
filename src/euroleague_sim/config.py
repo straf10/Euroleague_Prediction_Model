@@ -44,6 +44,20 @@ class MLConfig:
 
 
 @dataclass(frozen=True)
+class FeaturesConfig:
+    """Toggles for the Phase-1 additive features.
+
+    When a toggle is off the corresponding ``FEATURE_COLS`` entry is still
+    produced (as a neutral ``0.0``) so model dimensionality is stable; only the
+    upstream computation is skipped. Enable, then retrain, to use real values.
+    """
+    use_player_bpm: bool = True       # available-roster BPM (net_bpm_diff)
+    use_domestic_fatigue: bool = True  # rolling-7d domestic minutes diff
+    domestic_window_days: int = 7       # rolling fatigue window
+    domestic_cache_key: str = "domestic_matches"  # cache key for scraped fixtures
+
+
+@dataclass(frozen=True)
 class SeasonConfig:
     competition: str = "E"       # 'E' Euroleague, 'U' Eurocup
     season_start_year: int = 2025  # current season (2025-26)
@@ -57,6 +71,7 @@ class ProjectConfig:
     mc: MCConfig = MCConfig()
     shrinkage: ShrinkageConfig = ShrinkageConfig()
     ml: MLConfig = MLConfig()
+    features: FeaturesConfig = FeaturesConfig()
 
     @staticmethod
     def default() -> "ProjectConfig":
@@ -73,9 +88,10 @@ class ProjectConfig:
         mc = MCConfig(**data.get("mc", {}))
         shrinkage = ShrinkageConfig(**data.get("shrinkage", {}))
         ml = MLConfig(**data.get("ml", {}))
+        features = FeaturesConfig(**data.get("features", {}))
         return ProjectConfig(
             season=season, elo=elo,
-            mc=mc, shrinkage=shrinkage, ml=ml,
+            mc=mc, shrinkage=shrinkage, ml=ml, features=features,
         )
 
     def dump(self, path: Path) -> None:

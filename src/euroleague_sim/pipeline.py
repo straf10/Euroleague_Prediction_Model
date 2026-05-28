@@ -25,6 +25,13 @@ from .sim.engine import simulate_next_round
 from .ml.features import FEATURE_COLS, build_training_dataset, build_prediction_features
 from .ml.train import train_models
 from .ml.predict import load_predictor
+from .features.player_metrics import (
+    build_team_bpm_timeline,
+    team_bpm_game_diff,
+    compute_current_team_bpm,
+    current_team_bpm_to_game_diff,
+)
+from .data.domestic_scraper import domestic_fatigue_diff_for_schedule
 
 
 def _key(prefix: str, season: int) -> str:
@@ -277,6 +284,120 @@ def build_round_schedule_v2(
 # Step 10: ML training pipeline
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Phase-1 additive features (player BPM + domestic fatigue)
+# ---------------------------------------------------------------------------
+
+def build_player_bpm_timeline(cache: Cache, season: int, force: bool = False) -> pd.DataFrame:
+    """Build (and cache) the per team-game available-roster BPM timeline."""
+    k_bpm = _key("feat_player_bpm", season)
+    if not force and cache.has_df(k_bpm):
+        return cache.load_df(k_bpm)
+
+    k_bx = _key("raw_boxscore", season)
+    k_tg = _key("feat_team_game", season)
+    if not cache.has_df(k_bx) or not cache.has_df(k_tg):
+        return pd.DataFrame(columns=["Season", "Gamecode", "Round", "Team", "team_bpm_available"])
+
+    box = cache.load_df(k_bx)
+    team_game = cache.load_df(k_tg)
+    timeline = build_team_bpm_timeline(box, team_game)
+    cache.save_df(k_bpm, timeline)
+    return timeline
+
+
+def build_extra_training_features(
+    cache: Cache,
+    cfg: ProjectConfig,
+    current_season: int,
+    verbose: bool = True,
+) -> Dict[Tuple[int, int], Dict[str, float]]:
+    """Assemble ``{(season, gamecode): {net_bpm_diff, domestic_fatigue_diff}}``.
+
+    Honours the ``cfg.features`` toggles; disabled features simply contribute
+    nothing (defaulting to ``0.0`` downstream). Never raises — missing data
+    degrades gracefully.
+    """
+    extra: Dict[Tuple[int, int], Dict[str, float]] = {}
+    if not (cfg.features.use_player_bpm or cfg.features.use_domestic_fatigue):
+        return extra
+
+    start = current_season - cfg.season.history_seasons
+    domestic_matches = None
+    if cfg.features.use_domestic_fatigue and cache.has_df(cfg.features.domestic_cache_key):
+        domestic_matches = cache.load_df(cfg.features.domestic_cache_key)
+
+    for s in range(start, current_season + 1):
+        games_k = _key("feat_games", s)
+        if not cache.has_df(games_k):
+            continue
+        games_df = cache.load_df(games_k)
+        if games_df.empty:
+            continue
+
+        if cfg.features.use_player_bpm:
+            try:
+                timeline = build_player_bpm_timeline(cache, s)
+                bpm_diff = team_bpm_game_diff(games_df, timeline)
+                for _, r in bpm_diff.iterrows():
+                    extra.setdefault((s, int(r["Gamecode"])), {})["net_bpm_diff"] = float(r["net_bpm_diff"])
+            except Exception as exc:  # noqa: BLE001 - never break training
+                if verbose:
+                    print(f"  [features] BPM skipped for season {s}: {exc}")
+
+        if cfg.features.use_domestic_fatigue and domestic_matches is not None:
+            try:
+                sched = games_df.rename(columns={})[["Gamecode", "home_team", "away_team", "game_date"]]
+                dom = domestic_fatigue_diff_for_schedule(
+                    sched, domestic_matches, window_days=cfg.features.domestic_window_days,
+                )
+                for gc, val in dom.items():
+                    extra.setdefault((s, int(gc)), {})["domestic_fatigue_diff"] = float(val)
+            except Exception as exc:  # noqa: BLE001
+                if verbose:
+                    print(f"  [features] domestic fatigue skipped for season {s}: {exc}")
+
+    return extra
+
+
+def build_extra_prediction_features(
+    cache: Cache,
+    cfg: ProjectConfig,
+    season: int,
+    schedule_df: pd.DataFrame,
+) -> Dict[int, Dict[str, float]]:
+    """Assemble ``{gamecode: {net_bpm_diff, domestic_fatigue_diff}}`` for a round."""
+    extra: Dict[int, Dict[str, float]] = {}
+    if not (cfg.features.use_player_bpm or cfg.features.use_domestic_fatigue):
+        return extra
+
+    if cfg.features.use_player_bpm:
+        k_bx = _key("raw_boxscore", season)
+        k_tg = _key("feat_team_game", season)
+        if cache.has_df(k_bx) and cache.has_df(k_tg):
+            try:
+                current_bpm = compute_current_team_bpm(
+                    cache.load_df(k_bx), cache.load_df(k_tg),
+                )
+                for gc, val in current_team_bpm_to_game_diff(schedule_df, current_bpm).items():
+                    extra.setdefault(int(gc), {})["net_bpm_diff"] = float(val)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  [features] current BPM skipped: {exc}")
+
+    if cfg.features.use_domestic_fatigue and cache.has_df(cfg.features.domestic_cache_key):
+        try:
+            dom = domestic_fatigue_diff_for_schedule(
+                schedule_df, cache.load_df(cfg.features.domestic_cache_key),
+                window_days=cfg.features.domestic_window_days,
+            )
+            for gc, val in dom.items():
+                extra.setdefault(int(gc), {})["domestic_fatigue_diff"] = float(val)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [features] domestic fatigue (predict) skipped: {exc}")
+
+    return extra
+
+
 def prepare_training_data(
     cache: Cache,
     cfg: ProjectConfig,
@@ -319,7 +440,10 @@ def prepare_training_data(
         print(f"  [train] Building training dataset: {len(seasons_data)} season(s), "
               f"{total} games …")
 
-    train_df = build_training_dataset(seasons_data)
+    extra_features = build_extra_training_features(cache, cfg, current_season, verbose)
+    train_df = build_training_dataset(
+        seasons_data, extra_features_by_gamecode=extra_features,
+    )
 
     if verbose:
         print(f"  [train] Training dataset: {len(train_df)} rows x "
@@ -410,6 +534,7 @@ def predict_next_round(
     ml_margin = None
 
     if predictor is not None:
+        extra_pred = build_extra_prediction_features(cache, cfg, season, schedule)
         ml_features = build_prediction_features(
             schedule_df=schedule,
             team_ratings_df=team_ratings,
@@ -417,6 +542,7 @@ def predict_next_round(
             team_game_df=team_game,
             round_number=int(round_number),
             elo_base=cfg.elo.base,
+            extra_features_by_gamecode=extra_pred,
         )
         has_ml_ready = ml_features[FEATURE_COLS].notna().all(axis=1)
 

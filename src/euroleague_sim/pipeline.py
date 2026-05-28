@@ -32,6 +32,7 @@ from .features.player_metrics import (
     current_team_bpm_to_game_diff,
 )
 from .data.domestic_scraper import domestic_fatigue_diff_for_schedule
+from .data.team_registry import load_season_meta, max_rounds_from_meta
 
 
 def _key(prefix: str, season: int) -> str:
@@ -64,6 +65,17 @@ def update_season_cache(
     if force or not cache.has_df(k_cl):
         df = fetcher.clubs_v3()
         cache.save_df(k_cl, df)
+
+    # Phase-1: regenerate the season meta + team registry every refresh so the
+    # UI and the feature pipeline (round_progress normaliser) stay in sync
+    # with whatever the API currently reports.
+    try:
+        from .data.team_registry import write_registry_and_meta
+        gamecodes = cache.load_df(k_gc)
+        clubs = cache.load_df(k_cl) if cache.has_df(k_cl) else None
+        write_registry_and_meta(cache.root, season, gamecodes, clubs)
+    except Exception as exc:  # noqa: BLE001 - never break the fetch step
+        print(f"  [registry] skipped: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -441,8 +453,15 @@ def prepare_training_data(
               f"{total} games …")
 
     extra_features = build_extra_training_features(cache, cfg, current_season, verbose)
+    meta = load_season_meta(Path("data_cache"), current_season)
+    max_rounds = max_rounds_from_meta(meta)
+    if verbose:
+        print(f"  [train] round_progress normaliser max_rounds={max_rounds} "
+              f"({'from season_meta' if meta else 'default'})")
     train_df = build_training_dataset(
-        seasons_data, extra_features_by_gamecode=extra_features,
+        seasons_data,
+        max_rounds=max_rounds,
+        extra_features_by_gamecode=extra_features,
     )
 
     if verbose:
@@ -564,6 +583,8 @@ def predict_next_round(
 
     if predictor is not None:
         extra_pred = build_extra_prediction_features(cache, cfg, season, schedule)
+        meta = load_season_meta(Path("data_cache"), season)
+        max_rounds = max_rounds_from_meta(meta)
         ml_features = build_prediction_features(
             schedule_df=schedule,
             team_ratings_df=team_ratings,
@@ -571,6 +592,7 @@ def predict_next_round(
             team_game_df=team_game,
             round_number=int(round_number),
             elo_base=cfg.elo.base,
+            max_rounds=max_rounds,
             extra_features_by_gamecode=extra_pred,
         )
         has_ml_ready = ml_features[FEATURE_COLS].notna().all(axis=1)

@@ -1,9 +1,8 @@
-"""Streamlit dashboard for the Euroleague Prediction Model.
+"""Euroleague Prediction Model — Streamlit landing page.
 
-Reads ``data_cache/latest_predictions.csv`` (refreshed nightly by the GitHub
-Actions workflow) and renders a one-glance view of the next round: a hero
-metric strip, per-game probability bars, expected margins with the MC 10/90
-band, and a feature-differential table so the call is explainable.
+This is the multi-page entry point. The detailed per-round view lives at
+``pages/1_Daily_Predictions.py`` so each page has its own script lifecycle
+(independent caches, no cross-page recomputation).
 
 Run locally:
     streamlit run app.py
@@ -11,60 +10,35 @@ Run locally:
 
 from __future__ import annotations
 
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+from euroleague_sim.data.team_registry import (
+    load_season_meta,
+    load_teams_registry,
+    team_label,
+)
 
 
 CACHE_DIR = Path(__file__).parent / "data_cache"
 PREDICTIONS_CSV = CACHE_DIR / "latest_predictions.csv"
 
+
 st.set_page_config(
     page_title="Euroleague Prediction Model",
     page_icon="🏀",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
-# ── Styling ─────────────────────────────────────────────────────────────────
 st.markdown(
     """
     <style>
         .block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 1200px; }
         h1, h2, h3 { letter-spacing: -0.01em; }
-        .game-card {
-            background: linear-gradient(135deg, #15171c 0%, #1c1f27 100%);
-            border: 1px solid #2a2e39;
-            border-radius: 14px;
-            padding: 1.25rem 1.4rem;
-            margin-bottom: 1rem;
-        }
-        .game-card .teams {
-            font-size: 1.15rem; font-weight: 600; color: #f1f3f5;
-            display: flex; justify-content: space-between; align-items: baseline;
-        }
-        .game-card .date { color: #868e96; font-size: 0.82rem; }
-        .game-card .pred {
-            margin-top: 0.4rem; color: #adb5bd; font-size: 0.9rem;
-        }
-        .winner-pill {
-            background: #1f3a2b; color: #51cf66;
-            border-radius: 999px; padding: 2px 10px; font-size: 0.78rem;
-            font-weight: 600; margin-left: 0.4rem;
-        }
-        .prob-bar-wrap {
-            background: #2a2e39; height: 10px; border-radius: 6px;
-            overflow: hidden; margin-top: 0.7rem;
-        }
-        .prob-bar-fill {
-            height: 100%; background: linear-gradient(90deg, #339af0, #51cf66);
-        }
-        .prob-row {
-            display: flex; justify-content: space-between;
-            font-size: 0.82rem; color: #adb5bd; margin-top: 4px;
-        }
         .footer-meta { color: #6c757d; font-size: 0.78rem; margin-top: 2rem; }
     </style>
     """,
@@ -72,32 +46,37 @@ st.markdown(
 )
 
 
-# ── Data loading ────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def load_predictions(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path, parse_dates=["game_date"])
     df["p_home_win"] = df["p_home_win"].astype(float).clip(0, 1)
-    df = df.sort_values(["game_date", "gamecode"], na_position="last").reset_index(drop=True)
-    return df
+    return df.sort_values(["game_date", "gamecode"], na_position="last").reset_index(drop=True)
 
 
-def _file_mtime(path: Path) -> datetime | None:
+@st.cache_resource(show_spinner=False)
+def load_registry(season: int):
+    return load_teams_registry(CACHE_DIR, season)
+
+
+@st.cache_resource(show_spinner=False)
+def load_meta(season: int):
+    return load_season_meta(CACHE_DIR, season)
+
+
+def _mtime(path: Path) -> datetime | None:
     try:
         return datetime.fromtimestamp(path.stat().st_mtime)
     except FileNotFoundError:
         return None
 
 
-def _team_elo_ranking(df: pd.DataFrame) -> pd.DataFrame:
-    """Pull current Elo per team from the predictions snapshot (one row per game)."""
+def _elo_leaderboard(df: pd.DataFrame) -> pd.DataFrame:
     home = df[["home_team", "elo_home"]].rename(columns={"home_team": "team", "elo_home": "elo"})
     away = df[["away_team", "elo_away"]].rename(columns={"away_team": "team", "elo_away": "elo"})
     elos = pd.concat([home, away], ignore_index=True).dropna()
-    elos = elos.groupby("team", as_index=False)["elo"].max()
-    return elos.sort_values("elo", ascending=False).reset_index(drop=True)
+    return elos.groupby("team", as_index=False)["elo"].max().sort_values("elo", ascending=False).reset_index(drop=True)
 
 
-# ── Header ──────────────────────────────────────────────────────────────────
 st.title("🏀 Euroleague Prediction Model")
 st.caption(
     "CatBoost + Beta-calibrated probabilities · expanding-window walk-forward · "
@@ -112,8 +91,6 @@ if not PREDICTIONS_CSV.exists():
     st.stop()
 
 df = load_predictions(PREDICTIONS_CSV)
-mtime = _file_mtime(PREDICTIONS_CSV)
-
 if df.empty:
     st.warning("Predictions file is empty.")
     st.stop()
@@ -121,123 +98,69 @@ if df.empty:
 season = int(df["season"].iloc[0])
 round_n = int(df["round"].iloc[0])
 model_name = str(df["model"].iloc[0])
-
-# Off-season detection: prefer the explicit flag written by the pipeline,
-# fall back to "all dates in the past" so older snapshots still light up the
-# banner correctly.
-flagged_offseason = bool(df["is_offseason"].iloc[0]) if "is_offseason" in df.columns else False
-dates_all_past = (
-    df["game_date"].notna().all()
-    and (df["game_date"].dt.tz_localize(None) < pd.Timestamp.now()).all()
-) if "game_date" in df.columns else False
-is_offseason = flagged_offseason or dates_all_past
-
-if is_offseason:
-    st.info(
-        f"🏖️ **Off-season mode** — the EuroLeague season is over. Displaying "
-        f"predictions for the **last played round (Round {round_n})** of "
-        f"season {season}-{(season + 1) % 100:02d} so you can sanity-check the "
-        f"model against known results. New predictions will resume when the "
-        f"next season's schedule goes live."
-    )
+registry = load_registry(season)
+meta = load_meta(season)
 
 # ── Top metric strip ────────────────────────────────────────────────────────
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Season",  f"{season}-{(season + 1) % 100:02d}")
-c2.metric("Round",   round_n)
-c3.metric("Games",   len(df))
-c4.metric("Model",   model_name)
+c1.metric("Season", f"{season}-{(season + 1) % 100:02d}")
+c2.metric("Current Round", round_n)
+c3.metric("Teams Tracked", meta.get("n_teams") if meta else "—")
+c4.metric("Total Rounds", meta.get("n_rounds") if meta else "—")
 
+mtime = _mtime(PREDICTIONS_CSV)
 if mtime:
-    st.caption(f"Last updated: **{mtime:%Y-%m-%d %H:%M}** local")
+    st.caption(f"Last updated: **{mtime:%Y-%m-%d %H:%M}** local · model: `{model_name}`")
+
+st.info(
+    "👉 Open **Daily Predictions** from the sidebar for the game-by-game view, "
+    "feature differentials, and the round's win-probability bars."
+)
 
 st.divider()
 
-# ── Per-game cards ──────────────────────────────────────────────────────────
-st.subheader(f"Round {round_n} — game-by-game")
-
-for _, r in df.iterrows():
-    home, away = r["home_team"], r["away_team"]
-    p_home = float(r["p_home_win"])
-    winner = r["predicted_winner"]
-    conf = max(p_home, 1 - p_home) * 100
-    margin = float(r["expected_margin"]) if pd.notna(r["expected_margin"]) else 0.0
-    q10 = float(r["margin_q10"]) if pd.notna(r.get("margin_q10")) else float("nan")
-    q90 = float(r["margin_q90"]) if pd.notna(r.get("margin_q90")) else float("nan")
-    date_str = (
-        pd.to_datetime(r["game_date"]).strftime("%a %d %b %Y, %H:%M")
-        if pd.notna(r["game_date"]) else "Date TBD"
-    )
-
-    st.markdown(
-        f"""
-        <div class="game-card">
-          <div class="teams">
-            <span>{home}  <span style="color:#6c757d">vs</span>  {away}</span>
-            <span class="date">{date_str}</span>
-          </div>
-          <div class="pred">
-            Pick: <b>{winner}</b>
-            <span class="winner-pill">{conf:.0f}% confidence</span>
-            &nbsp;·&nbsp; Expected margin (home): <b>{margin:+.1f}</b>
-            &nbsp;·&nbsp; MC band: [{q10:+.1f}, {q90:+.1f}]
-          </div>
-          <div class="prob-bar-wrap">
-            <div class="prob-bar-fill" style="width:{p_home * 100:.1f}%"></div>
-          </div>
-          <div class="prob-row">
-            <span>{home} · {p_home:.1%}</span>
-            <span>{away} · {1 - p_home:.1%}</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-st.divider()
-
-# ── Feature diff table ──────────────────────────────────────────────────────
-st.subheader("Why the model picked it")
-st.caption(
-    "The three differentials the model leans on most — "
-    "positive favours home, negative favours away."
-)
-diff_view = df[[
-    "home_team", "away_team", "p_home_win", "expected_margin",
-    "elo_diff", "bpm_diff", "fatigue_diff",
-]].rename(columns={
-    "p_home_win":      "P(Home win)",
-    "expected_margin": "E[Margin]",
-    "elo_diff":        "Elo diff",
-    "bpm_diff":        "BPM diff",
-    "fatigue_diff":    "Fatigue diff",
-})
-st.dataframe(
-    diff_view.style.format({
-        "P(Home win)": "{:.1%}",
-        "E[Margin]":   "{:+.2f}",
-        "Elo diff":    "{:+.1f}",
-        "BPM diff":    "{:+.2f}",
-        "Fatigue diff": "{:+.1f}",
-    }).background_gradient(subset=["Elo diff", "BPM diff", "Fatigue diff"], cmap="RdYlGn"),
-    hide_index=True,
-    use_container_width=True,
-)
-
-# ── Elo leaderboard ─────────────────────────────────────────────────────────
-elos = _team_elo_ranking(df)
+# ── Elo leaderboard with full team names ────────────────────────────────────
+st.subheader("Current Elo standings")
+elos = _elo_leaderboard(df)
 if not elos.empty:
-    st.divider()
-    st.subheader("Current Elo (teams playing this round)")
+    elos["Team"] = elos["team"].map(lambda c: team_label(c, registry, "short"))
+    elos["Rank"] = range(1, len(elos) + 1)
     left, right = st.columns([2, 3])
     with left:
         st.dataframe(
-            elos.assign(rank=range(1, len(elos) + 1))[["rank", "team", "elo"]]
-                .style.format({"elo": "{:.0f}"}),
-            hide_index=True, use_container_width=True,
+            elos[["Rank", "Team", "elo"]].rename(columns={"elo": "Elo"})
+                .style.format({"Elo": "{:.0f}"}),
+            hide_index=True,
+            use_container_width=True,
         )
     with right:
-        st.bar_chart(elos.set_index("team")["elo"], height=360)
+        chart_df = elos.set_index("Team")["elo"]
+        st.bar_chart(chart_df, height=400)
+else:
+    st.write("No Elo data available in the current snapshot.")
+
+# ── Season phases panel ─────────────────────────────────────────────────────
+if meta and meta.get("phases"):
+    st.divider()
+    st.subheader("Season structure")
+    phase_labels = {
+        "regular_season": "Regular Season",
+        "playin": "Play-In",
+        "playoff": "Playoffs",
+        "final_four": "Final Four",
+    }
+    phase_rows = []
+    for key, (lo, hi) in meta["phases"].items():
+        phase_rows.append({
+            "Phase": phase_labels.get(key, key),
+            "Rounds": f"{lo}" if lo == hi else f"{lo}–{hi}",
+        })
+    st.dataframe(pd.DataFrame(phase_rows), hide_index=True, use_container_width=False)
+    st.caption(
+        f"Derived from `season_meta_E{season}.json`. "
+        f"Round-progress feature normalised by **{meta.get('regular_season_end_round', 34)}** "
+        f"(end of regular season)."
+    )
 
 st.markdown(
     f"<div class='footer-meta'>Snapshot: <code>{PREDICTIONS_CSV.name}</code> · "

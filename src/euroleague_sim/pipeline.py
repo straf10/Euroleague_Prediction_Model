@@ -33,6 +33,7 @@ from .features.player_metrics import (
 )
 from .data.domestic_scraper import domestic_fatigue_diff_for_schedule
 from .data.team_registry import load_season_meta, max_rounds_from_meta
+from .data.rosters import write_rosters, rosters_path
 
 
 def _key(prefix: str, season: int) -> str:
@@ -139,6 +140,15 @@ def build_features_for_season(
         "league_home_adv_net100": summ.league_home_adv_net100,
     }
     cache.save_json(_key("season_summary", season), summ_dict)
+
+    # Phase-2: per-team roster cache for the What-If injury simulator.
+    # Built whenever team_game is refreshed; failure is non-fatal because the
+    # simulator is optional UI sugar.
+    try:
+        if cache.has_df(k_bx):
+            write_rosters(cache.root, season, cache.load_df(k_bx), team_game)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [rosters] season {season} skipped: {exc}")
 
     return games, team_game, team_ratings, summ_dict
 
@@ -597,7 +607,7 @@ def predict_next_round(
         )
         has_ml_ready = ml_features[FEATURE_COLS].notna().all(axis=1)
 
-        for col in ("elo_diff_scaled", "net_bpm_diff", "domestic_fatigue_diff"):
+        for col in FEATURE_COLS:
             if col in ml_features.columns:
                 matchup[col] = ml_features[col].values
 
@@ -648,9 +658,13 @@ def predict_next_round(
         "q10", "q50", "q90",
         # Context
         "EloCurrent_home", "EloCurrent_away",
-        "elo_diff_scaled", "net_bpm_diff", "domestic_fatigue_diff",
+        *FEATURE_COLS,
         "A", "B", "margin_ml", "n_sims",
     ]
+    # ``FEATURE_COLS`` may overlap with the Context block above (e.g.
+    # ``net_bpm_diff``) — preserve order, drop dupes.
+    seen = set()
+    output_cols = [c for c in output_cols if not (c in seen or seen.add(c))]
     output_cols = [c for c in output_cols if c in pred.columns]
     out = pred[output_cols].copy()
     out["is_offseason"] = bool(is_offseason)

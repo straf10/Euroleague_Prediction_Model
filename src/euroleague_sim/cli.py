@@ -246,6 +246,15 @@ def main(argv=None):
         latest_path = Path(args.cache_dir) / "latest_predictions.csv"
         _save_latest_predictions(pred_df, season, eff_round, args.model, latest_path)
         print(f"Wrote dashboard snapshot to: {latest_path.resolve()}")
+
+        # Phase-2: persist the full 9-column feature matrix so the What-If
+        # simulator can take a single row, overwrite ``net_bpm_diff``, and
+        # re-run the CatBoost predictor without rebuilding any features.
+        from .ml.features import FEATURE_COLS as _FC
+        feat_cols = ["Gamecode", "home_team", "away_team", *[c for c in _FC if c in pred_df.columns]]
+        feat_path = Path(args.cache_dir) / "latest_features.csv"
+        pred_df[feat_cols].to_csv(feat_path, index=False)
+        print(f"Wrote feature snapshot to: {feat_path.resolve()}")
         return 0
 
     return 0
